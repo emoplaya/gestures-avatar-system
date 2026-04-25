@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Анализатор траекторий дактиля v2 — динамические буквы</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: #0a0a0f; color: #e0e0e0; }
+  header { padding: 16px 24px; border-bottom: 1px solid #222; background: #111; }
+  header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+  header p { margin: 0; font-size: 12px; color: #888; }
+
+  .wrap { display: grid; grid-template-columns: 320px 1fr; gap: 1px; background: #222; min-height: calc(100vh - 60px); }
+  aside { background: #0f0f14; padding: 16px; overflow-y: auto; max-height: calc(100vh - 60px); }
+  main { background: #0a0a0f; padding: 16px 24px; overflow-y: auto; max-height: calc(100vh - 60px); }
+
+  label.file { display: block; padding: 10px 12px; background: #4ade80; color: #000; border-radius: 8px; cursor: pointer; font-weight: 700; text-align: center; margin-bottom: 12px; }
+  label.file input { display: none; }
+
+  .group { background: #15151c; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .group h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #aaa; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .row label { flex: 1; font-size: 12px; color: #ccc; }
+  .row input[type="number"], .row input[type="text"], .row select { width: 90px; padding: 4px 6px; background: #222; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 12px; }
+  .row.full input[type="text"] { width: 100%; flex: 1; }
+  .row.check input { width: auto; }
+
+  button.action { width: 100%; padding: 8px; background: rgba(129,140,248,0.7); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px; margin-top: 4px; }
+  button.action:hover { background: rgba(129,140,248,0.9); }
+
+  canvas { display: block; background: #0f0f14; border-radius: 8px; margin-bottom: 16px; border: 1px solid #222; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+  .stat { background: #15151c; border-radius: 8px; padding: 10px 12px; }
+  .stat .label { font-size: 10px; text-transform: uppercase; color: #888; letter-spacing: 0.06em; }
+  .stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #222; color: #888; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  table td { padding: 5px 8px; border-bottom: 1px solid #1a1a1f; }
+  table tr:hover td { background: #15151c; }
+
+  .empty { text-align: center; padding: 60px 20px; color: #666; }
+  .empty h2 { font-size: 18px; margin: 0 0 8px; color: #aaa; }
+  .empty p { margin: 0; font-size: 13px; line-height: 1.5; }
+
+  .legend { display: flex; gap: 16px; font-size: 11px; color: #aaa; margin-bottom: 8px; flex-wrap: wrap; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend .sw { width: 14px; height: 3px; border-radius: 2px; }
+
+  h3.section { font-size:13px; color:#aaa; text-transform:uppercase; letter-spacing:0.06em; margin:20px 0 8px; }
+
+  details { margin-top: 12px; }
+  details summary { cursor: pointer; color: #aaa; font-size: 12px; padding: 4px 0; }
+  pre { background: #0a0a0f; padding: 10px; border-radius: 6px; font-size: 11px; color: #ddd; overflow-x: auto; }
+
+  .motionCard { background: #15151c; border: 1px solid #222; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .motionCard .title { font-weight: 700; font-size: 14px; margin-bottom: 6px; color: #f59e0b; }
+  .motionCard .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; font-size: 11px; }
+  .motionCard .stats-grid div { background: #0a0a0f; padding: 6px 8px; border-radius: 4px; }
+  .motionCard .stats-grid b { color: #fff; display: block; font-size: 13px; }
+  .motionCard .stats-grid span { color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📈 Анализатор траекторий дактиля v2</h1>
+  <p>HOLD-MOVE-HOLD сегментация. Для настройки правил динамических букв (Й, Р, Ц, Ч, Щ, Ы, Ь, Ъ).</p>
+</header>
+
+<div class="wrap">
+  <aside>
+    <label class="file">Загрузить CSV <input id="file" type="file" accept=".csv" /></label>
+
+    <div class="group">
+      <h3>Сигнал</h3>
+      <div class="row">
+        <label>Канал</label>
+        <select id="channel">
+          <option value="delta_l1_wrist" selected>Δ формы (без кисти)</option>
+          <option value="delta_l1">Δ сырое</option>
+          <option value="delta_angles">Δ углов</option>
+        </select>
+      </div>
+      <div class="row check"><label>Сглаживание</label><input id="smooth" type="number" value="5" min="1" max="21" step="2" /></div>
+    </div>
+
+    <div class="group">
+      <h3>Сегментация HOLD</h3>
+      <div class="row"><label>Порог фиксации</label><input id="threshold" type="number" value="0.25" min="0.05" max="0.9" step="0.05" /></div>
+      <div class="row"><label>Мин. HOLD, мс</label><input id="minHold" type="number" value="150" min="30" max="1000" step="10" /></div>
+      <div class="row"><label>Мин. переход, мс</label><input id="minGap" type="number" value="80" min="0" max="500" step="10" /></div>
+      <button class="action" id="runBtn">Найти HOLD / MOVE</button>
+    </div>
+
+    <div class="group">
+      <h3>Разметка</h3>
+      <div class="row full"><input id="expected" type="text" placeholder="Ожидаемая строка, напр. ЙОР" /></div>
+      <div class="row check"><input id="showExpected" type="checkbox" checked /><label>Показать на графике</label></div>
+    </div>
+
+    <div class="group">
+      <h3>Экспорт</h3>
+      <button class="action" id="exportKeyframes">keyframes.csv</button>
+      <button class="action" id="exportMotions" style="margin-top: 6px;">motions.csv</button>
+    </div>
+
+    <details>
+      <summary>Как использовать для динамических букв</summary>
+<pre style="font-size: 10px; line-height: 1.4;">
+1. В приложении покажите одну
+   динамическую букву (напр. Й),
+   включив «Старт лога».
+
+2. Сохраните CSV, загрузите сюда.
+
+3. Увидите 2+ HOLD и MOVE между ними.
+
+4. В разделе «Движения» — параметры
+   траектории запястья:
+   - направление up/down/left/right
+   - амплитуда отклонения
+   - количество разворотов (turns)
+   - доминирующая ось
+
+5. Эти параметры нужно перенести
+   в src/utils/dynamicLetterRecognizer.js
+   в DYNAMIC_DEFINITIONS.
+
+6. Повторите для каждой буквы.
+</pre>
+    </details>
+  </aside>
+
+  <main id="main">
+    <div class="empty" id="emptyState"><h2>Загрузите CSV, чтобы начать</h2><p>Для настройки ПАРАМЕТРОВ движения у динамических букв.</p></div>
+    <div id="content" style="display:none">
+      <div class="stats" id="stats"></div>
+      <div class="legend">
+        <span><span class="sw" style="background:#818cf8"></span> Δ(t)</span>
+        <span><span class="sw" style="background:#4ade80"></span> HOLD</span>
+        <span><span class="sw" style="background:#f59e0b"></span> MOVE</span>
+        <span><span class="sw" style="background:#ef4444"></span> Ключевой кадр</span>
+      </div>
+      <canvas id="chart" width="1200" height="320"></canvas>
+
+      <h3 class="section">HOLD-сегменты (ключевые кадры для статического распознавания)</h3>
+      <table id="keyframesTable">
+        <thead><tr><th>#</th><th>t, мс</th><th>Кадр</th><th>Δ</th><th>Длит., мс</th><th>Буква</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3 class="section">MOVE-сегменты — параметры для правил динамических букв</h3>
+      <div id="motions"></div>
+
+      <h3 class="section">Траектория запястья (XY)</h3>
+      <canvas id="wristChart" width="600" height="450"></canvas>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+let rawRows = [], signal = [], keyframes = [], motions = [];
+
+document.getElementById("file").addEventListener("change", async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  rawRows = parseCSV(await file.text());
+  document.getElementById("emptyState").style.display = "none";
+  document.getElementById("content").style.display = "block";
+  run();
+});
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((x) => x.length);
+  const header = lines[0].split(",");
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    const row = {};
+    for (let j = 0; j < header.length; j++) row[header[j]] = cols[j];
+    const r = {
+      t: +row.t, missing: +row.missing === 1,
+      delta_l1: row.delta_l1 ? +row.delta_l1 : null,
+      delta_l1_wrist: row.delta_l1_wrist ? +row.delta_l1_wrist : null,
+      delta_angles: row.delta_angles ? +row.delta_angles : null,
+    };
+    r.lm = [];
+    for (let k = 0; k < 21; k++) {
+      const x = row[`x${k}`], y = row[`y${k}`], z = row[`z${k}`];
+      if (x !== "" && x !== undefined) r.lm.push({ x: +x, y: +y, z: +z });
+      else { r.lm = null; break; }
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+function movingAverage(arr, window) {
+  if (window <= 1) return arr.slice();
+  const half = Math.floor(window / 2);
+  const out = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    let s = 0, n = 0;
+    for (let k = -half; k <= half; k++) {
+      const j = i + k; if (j < 0 || j >= arr.length) continue;
+      const v = arr[j]; if (v === null || v === undefined || isNaN(v)) continue;
+      s += v; n++;
+    }
+    out[i] = n ? s / n : null;
+  }
+  return out;
+}
+
+function findKeyframes(sig, threshold, minHoldMs, minGapMs, times) {
+  if (sig.length === 0) return { keyframes: [], motionRanges: [] };
+  let maxV = -Infinity;
+  for (const v of sig) if (v !== null && !isNaN(v) && v > maxV) maxV = v;
+  if (maxV <= 0) return { keyframes: [], motionRanges: [] };
+  const cutoff = threshold * maxV;
+
+  const lows = []; let start = -1;
+  for (let i = 0; i < sig.length; i++) {
+    const v = sig[i], isLow = v !== null && v <= cutoff;
+    if (isLow && start === -1) start = i;
+    if (!isLow && start !== -1) { lows.push([start, i - 1]); start = -1; }
+  }
+  if (start !== -1) lows.push([start, sig.length - 1]);
+  const holds = lows.filter(([a, b]) => times[b] - times[a] >= minHoldMs);
+  const merged = [];
+  for (const [a, b] of holds) {
+    if (merged.length && times[a] - times[merged[merged.length - 1][1]] < minGapMs) {
+      merged[merged.length - 1][1] = b;
+    } else merged.push([a, b]);
+  }
+  const kf = [];
+  for (const [a, b] of merged) {
+    let minI = a, minV = Infinity;
+    for (let i = a; i <= b; i++) {
+      const v = sig[i]; if (v !== null && v < minV) { minV = v; minI = i; }
+    }
+    kf.push({ idx: minI, t: times[minI], value: minV, holdStart: a, holdEnd: b, holdMs: times[b] - times[a] });
+  }
+  const motionRanges = [];
+  for (let i = 1; i < merged.length; i++) {
+    const [, prevEnd] = merged[i - 1], [currStart] = merged[i];
+    if (currStart - prevEnd > 1) motionRanges.push({ from: prevEnd, to: currStart, fromKf: i - 1, toKf: i });
+  }
+  return { keyframes: kf, motionRanges };
+}
+
+function analyzeMotion(motion, rows) {
+  const wristPath = [];
+  for (let i = motion.from; i <= motion.to; i++) {
+    if (rows[i].lm) wristPath.push({ x: rows[i].lm[0].x, y: rows[i].lm[0].y, z: rows[i].lm[0].z, t: rows[i].t });
+  }
+  if (wristPath.length < 3) return null;
+  const s = wristPath[0], e = wristPath[wristPath.length - 1];
+  const dx = e.x - s.x, dy = e.y - s.y, dz = e.z - s.z;
+  const displacement = Math.hypot(dx, dy, dz);
+  let pathLen = 0;
+  for (let i = 1; i < wristPath.length; i++) {
+    pathLen += Math.hypot(wristPath[i].x - wristPath[i-1].x, wristPath[i].y - wristPath[i-1].y, wristPath[i].z - wristPath[i-1].z);
+  }
+  const straightness = displacement / (pathLen + 1e-9);
+  let amplitude = 0;
+  for (const p of wristPath) {
+    const denom = dx*dx + dy*dy + 1e-9;
+    const proj = ((p.x - s.x) * dx + (p.y - s.y) * dy) / denom;
+    const dev = Math.hypot(p.x - (s.x + proj*dx), p.y - (s.y + proj*dy));
+    if (dev > amplitude) amplitude = dev;
+  }
+  let turns = 0; const leading = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; let lastSign = 0;
+  for (let i = 1; i < wristPath.length; i++) {
+    const d = leading === "x" ? wristPath[i].x - wristPath[i-1].x : wristPath[i].y - wristPath[i-1].y;
+    const sign = d > 0.002 ? 1 : d < -0.002 ? -1 : 0;
+    if (sign !== 0 && lastSign !== 0 && sign !== lastSign) turns++;
+    if (sign !== 0) lastSign = sign;
+  }
+  const absX = Math.abs(dx), absY = Math.abs(dy), absZ = Math.abs(dz);
+  let dominantAxis = "x", direction = dx > 0 ? "right" : "left";
+  if (absY > absX && absY > absZ) { dominantAxis = "y"; direction = dy > 0 ? "down" : "up"; }
+  else if (absZ > absX && absZ > absY) { dominantAxis = "z"; direction = dz > 0 ? "away" : "toward"; }
+  return { dx, dy, dz, displacement, pathLen, straightness, amplitude, turns, dominantAxis, direction, durationMs: e.t - s.t, wristPath };
+}
+
+function guessDynamicLetter(a, b, m) {
+  if (a === "И" && b === "И" && m.dominantAxis === "y" && m.turns >= 1 && m.amplitude < 0.12) return "Й";
+  if (a === "Б" && (b === "Б" || b === "А") && m.direction === "down" && m.turns === 0 && m.amplitude < 0.10) return "Ь";
+  if (a === "Б" && m.dominantAxis === "x" && m.direction === "right" && m.amplitude > 0.05) return "Ъ";
+  if ((a === "Б" || a === "У") && b === a && m.dominantAxis === "x" && m.turns === 0) return "Ы";
+  if (a === "У" && m.direction === "down" && m.amplitude < 0.08 && m.turns <= 1) return "Ц";
+  if (a === "Ш" && m.direction === "down" && m.turns === 0) return "Ч";
+  if (a === "Ш" && m.turns >= 2) return "Щ";
+  if ((a === "В" || a === "И" || a === "Б") && m.turns >= 2 && m.dominantAxis !== "z") return "Р";
+  return null;
+}
+
+for (const id of ["channel", "smooth", "threshold", "minHold", "minGap", "expected", "showExpected"]) {
+  document.getElementById(id).addEventListener("input", run);
+  document.getElementById(id).addEventListener("change", run);
+}
+document.getElementById("runBtn").addEventListener("click", run);
+
+function run() {
+  if (rawRows.length === 0) return;
+  const channel = document.getElementById("channel").value;
+  const window = +document.getElementById("smooth").value || 1;
+  const threshold = +document.getElementById("threshold").value;
+  const minHold = +document.getElementById("minHold").value;
+  const minGap = +document.getElementById("minGap").value;
+  const expected = document.getElementById("expected").value.trim();
+  const raw = rawRows.map((r) => (r.missing ? null : r[channel]));
+  signal = movingAverage(raw, window);
+  const times = rawRows.map((r) => r.t);
+  const r = findKeyframes(signal, threshold, minHold, minGap, times);
+  keyframes = r.keyframes;
+  motions = r.motionRanges.map((m) => ({ ...m, analysis: analyzeMotion(m, rawRows) }));
+  for (let i = 0; i < keyframes.length; i++) keyframes[i].expectedLetter = expected[i] || "";
+  renderStats(); renderKeyframesTable(); renderMotions(); renderChart(); renderWristChart();
+}
+
+function renderStats() {
+  const totalMs = rawRows.length ? rawRows[rawRows.length - 1].t - rawRows[0].t : 0;
+  const fps = totalMs > 0 ? Math.round((rawRows.length / totalMs) * 1000) : 0;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="label">Кадров</div><div class="value">${rawRows.length}</div></div>
+    <div class="stat"><div class="label">Длительность</div><div class="value">${(totalMs / 1000).toFixed(1)} с</div></div>
+    <div class="stat"><div class="label">FPS</div><div class="value">${fps}</div></div>
+    <div class="stat"><div class="label">HOLD / MOVE</div><div class="value">${keyframes.length} / ${motions.length}</div></div>
+  `;
+}
+
+function renderKeyframesTable() {
+  const tb = document.querySelector("#keyframesTable tbody");
+  tb.innerHTML = keyframes.map((k, i) => `
+    <tr><td>${i + 1}</td><td>${k.t}</td><td>${k.idx}</td><td>${k.value?.toFixed(5) ?? "—"}</td><td>${k.holdMs}</td>
+    <td style="font-size:16px;font-weight:700;color:#a78bfa">${k.expectedLetter || "—"}</td></tr>
+  `).join("");
+}
+
+function renderMotions() {
+  const box = document.getElementById("motions");
+  if (motions.length === 0) { box.innerHTML = '<div style="color:#666;font-size:12px;padding:10px;">Нет переходов.</div>'; return; }
+  box.innerHTML = motions.map((m, i) => {
+    const a = m.analysis; if (!a) return "";
+    const fromLetter = keyframes[m.fromKf]?.expectedLetter || "?";
+    const toLetter = keyframes[m.toKf]?.expectedLetter || "?";
+    const guess = guessDynamicLetter(fromLetter, toLetter, a);
+    return `
+      <div class="motionCard">
+        <div class="title">MOVE ${i + 1}: ${fromLetter} → ${toLetter}
+          ${guess ? `<span style="font-size:12px;color:#4ade80;margin-left:10px;">≈ «${guess}»</span>` : ""}</div>
+        <div class="stats-grid">
+          <div><span>Направление</span><b>${a.direction}</b></div>
+          <div><span>Ось</span><b>${a.dominantAxis}</b></div>
+          <div><span>Амплитуда</span><b>${a.amplitude.toFixed(4)}</b></div>
+          <div><span>Прямота</span><b>${a.straightness.toFixed(2)}</b></div>
+          <div><span>Turns</span><b>${a.turns}</b></div>
+          <div><span>Длит., мс</span><b>${a.durationMs}</b></div>
+          <div><span>Δx</span><b>${a.dx.toFixed(3)}</b></div>
+          <div><span>Δy</span><b>${a.dy.toFixed(3)}</b></div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function renderChart() {
+  const canvas = document.getElementById("chart"); const ctx = canvas.getContext("2d");
+  const W = canvas.parentElement.clientWidth - 2; const H = 320;
+  canvas.width = W; canvas.height = H; ctx.clearRect(0, 0, W, H);
+  const pad = { l: 50, r: 20, t: 20, b: 30 };
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  const times = rawRows.map((r) => r.t);
+  const tMin = times[0], tMax = times[times.length - 1];
+  let vMax = 0; for (const v of signal) if (v !== null && v > vMax) vMax = v;
+  if (vMax === 0) vMax = 1;
+  const x = (t) => pad.l + ((t - tMin) / (tMax - tMin || 1)) * plotW;
+  const y = (v) => pad.t + plotH - (v / vMax) * plotH;
+  ctx.strokeStyle = "#222"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++) { const yy = pad.t + (plotH / 5) * i; ctx.beginPath(); ctx.moveTo(pad.l, yy); ctx.lineTo(W - pad.r, yy); ctx.stroke(); }
+  ctx.fillStyle = "rgba(74,222,128,0.12)";
+  for (const k of keyframes) { const x1 = x(times[k.holdStart]), x2 = x(times[k.holdEnd]); ctx.fillRect(x1, pad.t, x2 - x1, plotH); }
+  ctx.fillStyle = "rgba(245,158,11,0.10)";
+  for (const m of motions) { const x1 = x(times[m.from]), x2 = x(times[m.to]); ctx.fillRect(x1, pad.t, x2 - x1, plotH); }
+  const threshold = +document.getElementById("threshold").value;
+  ctx.strokeStyle = "#555"; ctx.setLineDash([4, 4]);
+  const yT = y(threshold * vMax);
+  ctx.beginPath(); ctx.moveTo(pad.l, yT); ctx.lineTo(W - pad.r, yT); ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = "#818cf8"; ctx.lineWidth = 1.5; ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < signal.length; i++) {
+    if (signal[i] === null) { started = false; continue; }
+    const xi = x(times[i]), yi = y(signal[i]);
+    if (!started) { ctx.moveTo(xi, yi); started = true; } else ctx.lineTo(xi, yi);
+  }
+  ctx.stroke();
+  const showExp = document.getElementById("showExpected").checked;
+  ctx.fillStyle = "#ef4444";
+  for (const k of keyframes) {
+    const xi = x(k.t), yi = y(k.value);
+    ctx.beginPath(); ctx.arc(xi, yi, 4, 0, Math.PI * 2); ctx.fill();
+    if (showExp && k.expectedLetter) {
+      ctx.fillStyle = "#a78bfa"; ctx.font = "bold 14px system-ui"; ctx.textAlign = "center";
+      ctx.fillText(k.expectedLetter, xi, pad.t + 14);
+      ctx.fillStyle = "#ef4444";
+    }
+  }
+  ctx.textAlign = "start"; ctx.fillStyle = "#888"; ctx.font = "11px system-ui";
+  ctx.fillText("t, с", W - pad.r - 20, H - 8);
+  for (let i = 0; i <= 5; i++) { const tt = tMin + ((tMax - tMin) / 5) * i; ctx.fillText((tt / 1000).toFixed(1), x(tt) - 8, H - 12); }
+}
+
+function renderWristChart() {
+  const canvas = document.getElementById("wristChart"); const ctx = canvas.getContext("2d");
+  const W = canvas.parentElement.clientWidth - 2; const H = 450;
+  canvas.width = Math.min(W, 700); canvas.height = H;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const pts = rawRows.filter((r) => r.lm).map((r) => ({ x: r.lm[0].x, y: r.lm[0].y }));
+  if (pts.length === 0) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pts) { if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x; if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y; }
+  const pad = 30;
+  const sx = (canvas.width - pad * 2) / Math.max(maxX - minX, 0.001);
+  const sy = (canvas.height - pad * 2) / Math.max(maxY - minY, 0.001);
+  const scale = Math.min(sx, sy), ox = pad - minX * scale, oy = pad - minY * scale;
+  const X = (p) => p.x * scale + ox, Y = (p) => p.y * scale + oy;
+  ctx.strokeStyle = "#333"; ctx.lineWidth = 1; ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) { if (i === 0) ctx.moveTo(X(pts[i]), Y(pts[i])); else ctx.lineTo(X(pts[i]), Y(pts[i])); }
+  ctx.stroke();
+  ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2.5;
+  for (const m of motions) {
+    if (!m.analysis) continue;
+    ctx.beginPath();
+    for (let i = 0; i < m.analysis.wristPath.length; i++) {
+      const p = m.analysis.wristPath[i];
+      if (i === 0) ctx.moveTo(X(p), Y(p)); else ctx.lineTo(X(p), Y(p));
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#4ade80";
+  for (const k of keyframes) {
+    if (!rawRows[k.idx].lm) continue;
+    const p = { x: rawRows[k.idx].lm[0].x, y: rawRows[k.idx].lm[0].y };
+    ctx.beginPath(); ctx.arc(X(p), Y(p), 5, 0, Math.PI * 2); ctx.fill();
+    if (k.expectedLetter) {
+      ctx.fillStyle = "#a78bfa"; ctx.font = "bold 14px system-ui";
+      ctx.fillText(k.expectedLetter, X(p) + 7, Y(p) - 7);
+      ctx.fillStyle = "#4ade80";
+    }
+  }
+  ctx.fillStyle = "#666"; ctx.font = "11px system-ui";
+  ctx.fillText("Серое — весь путь, оранжевое — MOVE-сегменты, зелёные точки — HOLD.", 10, canvas.height - 10);
+}
+
+document.getElementById("exportKeyframes").addEventListener("click", () => {
+  if (keyframes.length === 0) { alert("Сначала запустите анализ."); return; }
+  const lines = ["idx,t_ms,frame_idx,delta,hold_start_idx,hold_end_idx,hold_ms,expected_letter"];
+  for (let i = 0; i < keyframes.length; i++) {
+    const k = keyframes[i];
+    lines.push([i+1, k.t, k.idx, k.value?.toFixed(6), k.holdStart, k.holdEnd, k.holdMs, k.expectedLetter].join(","));
+  }
+  downloadCSV(lines.join("\n"), "keyframes.csv");
+});
+document.getElementById("exportMotions").addEventListener("click", () => {
+  if (motions.length === 0) { alert("Нет переходов."); return; }
+  const lines = ["idx,from,to,direction,axis,amplitude,straightness,turns,duration_ms,dx,dy,dz,guess"];
+  for (let i = 0; i < motions.length; i++) {
+    const m = motions[i]; const a = m.analysis; if (!a) continue;
+    const from = keyframes[m.fromKf]?.expectedLetter || "", to = keyframes[m.toKf]?.expectedLetter || "";
+    lines.push([i+1, from, to, a.direction, a.dominantAxis, a.amplitude.toFixed(5), a.straightness.toFixed(3), a.turns, a.durationMs, a.dx.toFixed(4), a.dy.toFixed(4), a.dz.toFixed(4), guessDynamicLetter(from, to, a) || ""].join(","));
+  }
+  downloadCSV(lines.join("\n"), "motions.csv");
+});
+function downloadCSV(text, name) {
+  const blob = new Blob([text], { type: "text/csv" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+window.addEventListener("resize", () => rawRows.length && (renderChart(), renderWristChart()));
+</script>
+</body>
+</html>
