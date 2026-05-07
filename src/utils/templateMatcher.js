@@ -135,6 +135,7 @@ function resampleSequence(seq, targetLen = CANONICAL_LENGTH) {
 }
 
 import { extractKeyframes } from "./keyframeExtractor";
+import { api } from "./api";
 
 // ====== Основной класс ======
 
@@ -157,6 +158,11 @@ export class TemplateMatcher {
   /**
    * Добавляет эталон. framesRaw — массив {lm, t} кадров записи.
    * Сжимает последовательность до ключевых кадров (extractKeyframes).
+   *
+   * ВАЖНО: запись в backend происходит асинхронно. Локально template
+   * добавляется сразу — UI не ждёт сети. На ошибке сети мы оставляем его
+   * в памяти (распознавание работает), но логируем — он не выживет
+   * перезагрузку страницы.
    */
   addTemplate(label, framesRaw) {
     if (!framesRaw || framesRaw.length < 4) {
@@ -188,55 +194,59 @@ export class TemplateMatcher {
       createdAt: Date.now(),
     };
     this.templates.push(template);
-    this._persist();
+    // Async fire-and-forget. Сериализуем Float32Array → массив для JSON.
+    api.createTemplate({
+      id: template.id,
+      label: template.label,
+      features: template.features.map(f => Array.from(f)),
+      rawLength: template.rawLength,
+      keyframeIndices: template.keyframeIndices,
+      createdAt: template.createdAt,
+    }).catch(e => console.warn("[matcher] Не удалось сохранить эталон:", e));
     return template;
   }
 
   removeTemplate(id) {
     this.templates = this.templates.filter(t => t.id !== id);
-    this._persist();
+    api.deleteTemplate(id).catch(e =>
+      console.warn("[matcher] Не удалось удалить эталон:", e),
+    );
   }
 
   /**
    * Удаляет все эталоны с данной меткой.
    */
   removeByLabel(label) {
+    const removed = this.templates.filter(t => t.label === label);
     this.templates = this.templates.filter(t => t.label !== label);
-    this._persist();
+    Promise.all(removed.map(t => api.deleteTemplate(t.id))).catch(e =>
+      console.warn("[matcher] Не удалось удалить эталоны по метке:", e),
+    );
   }
 
   clear() {
     this.templates = [];
-    this._persist();
+    api.clearTemplates().catch(e =>
+      console.warn("[matcher] Не удалось очистить эталоны:", e),
+    );
   }
 
   /**
-   * Загрузить эталоны из localStorage. Возвращает кол-во загруженных.
+   * Загрузить эталоны с backend. Возвращает promise с кол-вом загруженных.
+   * Этот метод заменяет старый sync load() — все вызывающие места теперь
+   * могут (но не обязаны) ждать его.
    */
-  load() {
+  async load() {
     try {
-      const raw = localStorage.getItem("template_matcher_v2");
-      if (!raw) return 0;
-      const data = JSON.parse(raw);
-      this.templates = data.map(t => ({
+      const data = await api.listTemplates();
+      this.templates = (Array.isArray(data) ? data : []).map(t => ({
         ...t,
-        features: t.features.map(f => new Float32Array(f)),
+        features: (t.features || []).map(f => new Float32Array(f)),
       }));
       return this.templates.length;
-    } catch {
-      return 0;
-    }
-  }
-
-  _persist() {
-    try {
-      const data = this.templates.map(t => ({
-        ...t,
-        features: t.features.map(f => Array.from(f)),
-      }));
-      localStorage.setItem("template_matcher_v2", JSON.stringify(data));
     } catch (e) {
-      console.warn("Не удалось сохранить эталоны:", e);
+      console.warn("[matcher] Не удалось загрузить эталоны:", e);
+      return 0;
     }
   }
 

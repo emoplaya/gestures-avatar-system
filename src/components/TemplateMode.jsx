@@ -5,6 +5,7 @@ import {
   IconRec, IconStop, IconClose, IconGraduation, IconTrash, IconCheck,
 } from "./icons";
 import { TemplateMatcher } from "../utils/templateMatcher";
+import { processVideoFile } from "../utils/videoToGesture";
 
 /**
  * Режим «Обучи-покажи»:
@@ -23,10 +24,19 @@ export const TemplateMode = ({ onRecognized }) => {
   const matcherRef = useRef(null);
   if (!matcherRef.current) {
     matcherRef.current = new TemplateMatcher();
-    matcherRef.current.load();
   }
 
   const [templates, setTemplates] = useState(() => matcherRef.current.getTemplates());
+
+  // Стартовая подгрузка эталонов с сервера. load() async — обновляем
+  // локальный стейт после ответа.
+  useEffect(() => {
+    let cancelled = false;
+    matcherRef.current.load().then(() => {
+      if (!cancelled) setTemplates(matcherRef.current.getTemplates());
+    });
+    return () => { cancelled = true; };
+  }, []);
   const [recognized, setRecognized] = useState("");
   const [status, setStatus] = useState("idle"); // idle | recording | armed
   const [label, setLabel] = useState("");
@@ -37,6 +47,12 @@ export const TemplateMode = ({ onRecognized }) => {
   // Храним кадры в промежуточном буфере между записью и решением юзера.
   const [pendingSave, setPendingSave] = useState(null);
   // pendingSave: { label, fullFrames } | null
+
+  // Состояние загрузки/обработки видео (отдельный путь — без вебкамеры).
+  const [videoStatus, setVideoStatus] = useState("idle"); // idle | processing
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoError, setVideoError] = useState("");
+  const fileInputRef = useRef(null);
 
   const importRecording = useGestureRecorder(s => s.importRecording);
 
@@ -209,6 +225,65 @@ export const TemplateMode = ({ onRecognized }) => {
     setCountdown(0);
   };
 
+  // ---- Загрузка жеста из видеофайла ----
+  // Тот же принцип, что REC с вебкамерой: прогоняем кадры через MediaPipe,
+  // получаем landmarks, регистрируем как DTW-эталон и сохраняем как
+  // полноценную анимацию аватара.
+  const handleVideoFile = async (e) => {
+    const file = e.target.files?.[0];
+    // Сразу сбрасываем input, чтобы повторная загрузка того же файла
+    // (например, после исправления метки) триггерила change.
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (!file) return;
+
+    if (!label.trim()) {
+      setVideoError("Сначала введите метку жеста");
+      return;
+    }
+
+    setVideoError("");
+    setVideoStatus("processing");
+    setVideoProgress(0);
+
+    try {
+      const frames = await processVideoFile(file, (p) => setVideoProgress(p));
+
+      // DTW-эталон: только кадры, где видно одну руку (берём правую,
+      // если её нет — левую, как в live-режиме).
+      const handFrames = frames
+        .map((f) => ({
+          lm: f.rightHandLandmarks || f.leftHandLandmarks || null,
+          t: f.t,
+        }))
+        .filter((f) => f.lm);
+
+      if (handFrames.length < 4) {
+        throw new Error(
+          "В видео не удалось распознать руку (минимум 4 кадра). " +
+            "Убедитесь, что рука хорошо видна в кадре.",
+        );
+      }
+
+      const finalLabel = label.trim().toUpperCase();
+      matcherRef.current.addTemplate(finalLabel, handFrames);
+      refreshTemplates();
+
+      // И сразу сохраняем как анимацию — в видео-сценарии это всегда
+      // имеет смысл (пользователь явно загрузил готовое видео жеста).
+      // Помечаем источник как "video", чтобы в плеере было видно.
+      await importRecording(finalLabel, frames, "video");
+
+      setLabel("");
+      setVideoStatus("idle");
+      setVideoProgress(0);
+    } catch (err) {
+      console.warn("[TemplateMode] video processing failed:", err);
+      setVideoError(err.message || "Не удалось обработать видео");
+      setVideoStatus("idle");
+      setVideoProgress(0);
+    }
+  };
+
   const toggleArmed = () => {
     if (status === "armed") {
       setStatus("idle");
@@ -239,7 +314,8 @@ export const TemplateMode = ({ onRecognized }) => {
     grouped.get(t.label).push(t);
   }
 
-  if (!videoElement) return null;
+  const cameraOn = !!videoElement;
+  const recordBusy = status !== "idle" || videoStatus !== "idle";
 
   return (
     <div>
@@ -252,11 +328,22 @@ export const TemplateMode = ({ onRecognized }) => {
             placeholder="Метка (ПРИВЕТ / Й / СПАСИБО)"
             value={label}
             onChange={e => setLabel(e.target.value)}
-            disabled={status !== "idle"}
+            disabled={recordBusy}
             style={styles.input}
           />
           {status === "idle" && (
-            <button onClick={startRecording} style={{ ...styles.btn, background: "#4ade80", color: "#000" }}>
+            <button
+              onClick={startRecording}
+              disabled={!cameraOn || videoStatus !== "idle"}
+              title={!cameraOn ? "Включите камеру для записи с вебкамеры" : ""}
+              style={{
+                ...styles.btn,
+                background: "#4ade80",
+                color: "#000",
+                opacity: !cameraOn || videoStatus !== "idle" ? 0.4 : 1,
+                cursor: !cameraOn || videoStatus !== "idle" ? "not-allowed" : "pointer",
+              }}
+            >
               <IconRec size={12} color="#000" /><span>REC</span>
             </button>
           )}
@@ -272,6 +359,56 @@ export const TemplateMode = ({ onRecognized }) => {
           )}
         </div>
 
+        {/* Кнопка «Загрузить видео» — обучение без вебкамеры. Принцип тот же:
+            видео прогоняется через MediaPipe, кадры сохраняются как эталон
+            и анимация. */}
+        {status === "idle" && (
+          <>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="video/*"
+              onChange={handleVideoFile}
+              disabled={recordBusy}
+              style={{ display: "none" }}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={videoStatus !== "idle"}
+              style={{
+                ...styles.btn,
+                width: "100%",
+                background: "rgba(129,140,248,0.7)",
+                marginBottom: 8,
+                opacity: videoStatus !== "idle" ? 0.5 : 1,
+                cursor: videoStatus !== "idle" ? "wait" : "pointer",
+              }}
+            >
+              {videoStatus === "processing" ? (
+                <>Обработка видео… {Math.round(videoProgress * 100)}%</>
+              ) : (
+                <>Загрузить видео жеста</>
+              )}
+            </button>
+            {videoStatus === "processing" && (
+              <div style={styles.progressBar}>
+                <div
+                  style={{ ...styles.progressFill, width: `${videoProgress * 100}%` }}
+                />
+              </div>
+            )}
+            {videoError && (
+              <div
+                style={{
+                  fontSize: 11, color: "#ef4444", marginTop: 4, lineHeight: 1.3,
+                }}
+              >
+                {videoError}
+              </div>
+            )}
+          </>
+        )}
+
         {status === "countdown" && (
           <div style={styles.bigCenter}>
             <div style={{ fontSize: 48, fontWeight: 900, color: "#f59e0b" }}>{countdown}</div>
@@ -284,10 +421,11 @@ export const TemplateMode = ({ onRecognized }) => {
             <div style={styles.hint}>Покажите жест (2 секунды, кадров: {recBufferRef.current.length})</div>
           </div>
         )}
-        {status === "idle" && (
+        {status === "idle" && videoStatus === "idle" && (
           <div style={styles.hint}>
-            Введите метку, нажмите REC, после «3, 2, 1» — покажите жест. Можно записать
-            один и тот же жест несколько раз — точность вырастет.
+            {cameraOn
+              ? "REC — записать с вебкамеры (3, 2, 1 → 2 секунды). Либо загрузите готовое видео жеста — тот же принцип, MediaPipe вытащит траекторию."
+              : "Камера выключена. Можно загрузить готовое видео жеста — оно будет обработано тем же MediaPipe, что и вебкамера."}
           </div>
         )}
       </div>
@@ -539,5 +677,18 @@ const styles = {
     background: "rgba(74,222,128,0.08)",
     border: "1px solid rgba(74,222,128,0.25)",
     borderBottom: "1px solid rgba(74,222,128,0.25)",
+  },
+  progressBar: {
+    height: 4,
+    width: "100%",
+    background: "rgba(255,255,255,0.08)",
+    borderRadius: 2,
+    overflow: "hidden",
+    marginBottom: 6,
+  },
+  progressFill: {
+    height: "100%",
+    background: "linear-gradient(90deg, #818cf8, #a78bfa)",
+    transition: "width 0.15s linear",
   },
 };

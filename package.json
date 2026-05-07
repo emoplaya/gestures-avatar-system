@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "dev:all": "concurrently -n vite,api -c blue,green \"npm run dev\" \"npm run server\"",
+    "start": "node server/index.js"
   },
   "dependencies": {
     "@mediapipe/camera_utils": "^0.3.1675466862",
@@ -17,6 +20,9 @@
     "@react-three/fiber": "^9.0.4",
     "@react-three/postprocessing": "^3.0.4",
     "@tailwindcss/vite": "^4.1.4",
+    "concurrently": "^8.2.2",
+    "cors": "^2.8.6",
+    "express": "^4.22.1",
     "kalidokit": "^1.1.5",
     "leva": "^0.10.0",
     "react": "^19.0.0",

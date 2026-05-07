@@ -1,12 +1,10 @@
 import { create } from "zustand";
-
-// Версия формата — при смене схемы старые записи инвалидируются
-const STORAGE_KEY = "gesture_recordings_v2";
+import { api } from "../utils/api";
 
 /**
- * Формат записи:
+ * Формат записи (на бекенде хранится точно так же):
  * {
- *   id, name, duration, createdAt,
+ *   id, name, duration, createdAt, source,
  *   frames: [
  *     {
  *       t: ms,
@@ -16,20 +14,42 @@ const STORAGE_KEY = "gesture_recordings_v2";
  *     }
  *   ]
  * }
+ *
+ * Все CRUD-операции уходят на backend (server/index.js). Локально мы держим
+ * слепок recordings в стейте — он обновляется после успешного ответа API.
  */
 export const useGestureRecorder = create((set, get) => ({
-  // Состояние записи
+  // ===== Состояние записи (живая, в памяти) =====
   isRecording: false,
   recordingFrames: [],
   recordingStartTime: null,
 
-  // Сохранённые записи
-  recordings: loadRecordings(),
+  // ===== Сохранённые записи =====
+  recordings: [],
+  recordingsLoaded: false,
+  recordingsError: null,
 
-  // Воспроизведение
+  // ===== Воспроизведение =====
   isPlaying: false,
   playingIndex: null,
   playbackFrame: 0,
+
+  /**
+   * Загрузить список записей с сервера. Вызывается при старте приложения.
+   */
+  fetchRecordings: async () => {
+    try {
+      const recordings = await api.listRecordings();
+      set({
+        recordings: Array.isArray(recordings) ? recordings : [],
+        recordingsLoaded: true,
+        recordingsError: null,
+      });
+    } catch (e) {
+      console.warn("[recorder] Не удалось загрузить записи:", e);
+      set({ recordingsLoaded: true, recordingsError: e.message });
+    }
+  },
 
   startRecording: () => {
     set({
@@ -63,30 +83,37 @@ export const useGestureRecorder = create((set, get) => ({
     });
   },
 
-  stopRecording: (name) => {
+  /**
+   * Остановить запись и отправить её на сервер.
+   * Возвращает promise с готовой записью (как её сохранил сервер).
+   */
+  stopRecording: async (name) => {
     const state = get();
     if (!state.isRecording) return null;
 
     const frames = state.recordingFrames;
-    const recording = {
-      id: Date.now().toString(36),
+    const draft = {
       name: (name && name.trim()) || `Запись ${state.recordings.length + 1}`,
       frames,
       duration: frames.length > 0 ? frames[frames.length - 1].t : 0,
-      createdAt: new Date().toISOString(),
+      source: "camera",
     };
-
-    const newRecordings = [...state.recordings, recording];
-    saveRecordings(newRecordings);
 
     set({
       isRecording: false,
       recordingFrames: [],
       recordingStartTime: null,
-      recordings: newRecordings,
     });
 
-    return recording;
+    try {
+      const saved = await api.createRecording(draft);
+      set({ recordings: [...get().recordings, saved] });
+      return saved;
+    } catch (e) {
+      console.warn("[recorder] Не удалось сохранить запись:", e);
+      // Возвращаем draft, чтобы UI хотя бы показал что-то осмысленное.
+      return null;
+    }
   },
 
   cancelRecording: () => {
@@ -97,32 +124,45 @@ export const useGestureRecorder = create((set, get) => ({
     });
   },
 
-  deleteRecording: (id) => {
-    const newRecordings = get().recordings.filter((r) => r.id !== id);
-    saveRecordings(newRecordings);
-    set({ recordings: newRecordings });
+  deleteRecording: async (id) => {
+    // Оптимистично убираем из UI, на ошибке вернём.
+    const before = get().recordings;
+    set({ recordings: before.filter((r) => r.id !== id) });
+    try {
+      await api.deleteRecording(id);
+    } catch (e) {
+      console.warn("[recorder] Не удалось удалить запись:", e);
+      set({ recordings: before });
+    }
   },
 
-  renameRecording: (id, newName) => {
+  renameRecording: async (id, newName) => {
     const trimmed = (newName || "").trim();
     if (!trimmed) return;
-    const newRecordings = get().recordings.map((r) =>
-      r.id === id ? { ...r, name: trimmed } : r,
-    );
-    saveRecordings(newRecordings);
-    set({ recordings: newRecordings });
+    const before = get().recordings;
+    set({
+      recordings: before.map((r) => (r.id === id ? { ...r, name: trimmed } : r)),
+    });
+    try {
+      await api.updateRecording(id, { name: trimmed });
+    } catch (e) {
+      console.warn("[recorder] Не удалось переименовать запись:", e);
+      set({ recordings: before });
+    }
   },
 
   /**
    * Импорт готовой записи. Используется, когда жест был записан в другом
-   * месте приложения (например, в режиме «Обучи» через TemplateMode),
-   * и пользователь хочет добавить его в коллекцию записей аватара.
+   * месте приложения (TemplateMode при сохранении эталона) или получен
+   * из загруженного видео.
    *
    * frames — массив {poseLandmarks, leftHandLandmarks, rightHandLandmarks,
-   * faceLandmarks, t}. Если время t не задано, проставляется из индекса
-   * с шагом ~33 мс.
+   * faceLandmarks, poseWorldLandmarks, t}. Если время t не задано,
+   * проставляется из индекса с шагом ~33 мс.
+   *
+   * source — пометка "camera" / "video" / иное, чтобы UI мог отличить.
    */
-  importRecording: (name, frames) => {
+  importRecording: async (name, frames, source = "camera") => {
     if (!frames || frames.length === 0) return null;
     const withTimes = frames.map((f, i) => ({
       poseLandmarks: f.poseLandmarks || null,
@@ -132,17 +172,20 @@ export const useGestureRecorder = create((set, get) => ({
       faceLandmarks: f.faceLandmarks || null,
       t: typeof f.t === "number" ? f.t : i * 33,
     }));
-    const recording = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    const draft = {
       name: (name && name.trim()) || `Запись ${get().recordings.length + 1}`,
       frames: withTimes,
       duration: withTimes[withTimes.length - 1].t,
-      createdAt: new Date().toISOString(),
+      source,
     };
-    const newRecordings = [...get().recordings, recording];
-    saveRecordings(newRecordings);
-    set({ recordings: newRecordings });
-    return recording;
+    try {
+      const saved = await api.createRecording(draft);
+      set({ recordings: [...get().recordings, saved] });
+      return saved;
+    } catch (e) {
+      console.warn("[recorder] Не удалось импортировать запись:", e);
+      return null;
+    }
   },
 
   // ===== Плеер =====
@@ -192,6 +235,11 @@ export const useGestureRecorder = create((set, get) => ({
   },
 }));
 
+// Стартовая загрузка списка с сервера. Вызываем сразу при импорте — модуль
+// загружается до первого рендера App, так что recordings уже подтянутся к
+// моменту, когда AnimationPlayer/TranslateMode запросят их.
+useGestureRecorder.getState().fetchRecordings();
+
 // ===== Вспомогательные =====
 
 function cloneLandmarks(arr) {
@@ -203,22 +251,4 @@ function cloneLandmarks(arr) {
     z: p.z,
     ...(p.visibility !== undefined ? { visibility: p.visibility } : {}),
   }));
-}
-
-function loadRecordings() {
-  try {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveRecordings(recordings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(recordings));
-  } catch (e) {
-    // localStorage может быть переполнен (длинные записи = много МБ).
-    console.warn("Не удалось сохранить запись:", e);
-  }
 }

@@ -398,16 +398,22 @@ const RecognizeGesturePanel = ({
   const statusRef = useRef("idle");
   statusRef.current = status;
 
-  // TemplateMatcher — тот же, что в «Обучи». Эталоны лежат в localStorage,
-  // поэтому достаточно вызвать load(), и сюда подтянутся все записанные жесты.
+  // TemplateMatcher — тот же, что в «Обучи». Эталоны теперь хранятся на
+  // backend; load() их подтягивает (async). Поэтому стартуем с 0 и
+  // обновляем счётчик после первой загрузки + периодически.
   const matcherRef = useRef(null);
   if (!matcherRef.current) {
     matcherRef.current = new TemplateMatcher();
-    matcherRef.current.load();
   }
-  const [templatesCount, setTemplatesCount] = useState(
-    () => matcherRef.current.getTemplates().length,
-  );
+  const [templatesCount, setTemplatesCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    matcherRef.current.load().then(() => {
+      if (!cancelled) setTemplatesCount(matcherRef.current.getTemplates().length);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const videoElement = useVideoRecognition((s) => s.videoElement);
 
@@ -425,14 +431,18 @@ const RecognizeGesturePanel = ({
     return () => onCameraActiveChange?.(false);
   }, [cameraOn, onCameraActiveChange]);
 
-  // Каждые 2 секунды обновляем счётчик эталонов — на случай, если пользователь
-  // только что записал новый жест во вкладке «Обучи» и вернулся сюда.
+  // Каждые 2 секунды переподтягиваем эталоны с сервера — на случай,
+  // если пользователь только что записал новый жест во вкладке «Обучи»
+  // и вернулся сюда (или жест был добавлен с другого устройства).
   useEffect(() => {
-    const id = setInterval(() => {
-      matcherRef.current.load();
-      setTemplatesCount(matcherRef.current.getTemplates().length);
+    let cancelled = false;
+    const id = setInterval(async () => {
+      await matcherRef.current.load();
+      if (!cancelled) {
+        setTemplatesCount(matcherRef.current.getTemplates().length);
+      }
     }, 2000);
-    return () => clearInterval(id);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   // Пока камера включена в этом режиме — БЛОКИРУЕМ передачу живых кадров
