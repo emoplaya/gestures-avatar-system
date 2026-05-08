@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api } from "../utils/api";
+import { cleanPhantomHand } from "../utils/handCleanup";
 
 /**
  * Формат записи (на бекенде хранится точно так же):
@@ -91,12 +92,17 @@ export const useGestureRecorder = create((set, get) => ({
     const state = get();
     if (!state.isRecording) return null;
 
-    const frames = state.recordingFrames;
+    const rawFrames = state.recordingFrames;
+    // Чистим «фантомную» вторую руку — типичный артефакт MediaPipe
+    // на одноручных жестах. См. handCleanup.js.
+    const { frames, dominantHand } = cleanPhantomHand(rawFrames);
+
     const draft = {
       name: (name && name.trim()) || `Запись ${state.recordings.length + 1}`,
       frames,
       duration: frames.length > 0 ? frames[frames.length - 1].t : 0,
       source: "camera",
+      dominantHand,
     };
 
     set({
@@ -172,11 +178,14 @@ export const useGestureRecorder = create((set, get) => ({
       faceLandmarks: f.faceLandmarks || null,
       t: typeof f.t === "number" ? f.t : i * 33,
     }));
+    // Чистим фантомную вторую руку — то же, что и в stopRecording.
+    const { frames: cleaned, dominantHand } = cleanPhantomHand(withTimes);
     const draft = {
       name: (name && name.trim()) || `Запись ${get().recordings.length + 1}`,
-      frames: withTimes,
-      duration: withTimes[withTimes.length - 1].t,
+      frames: cleaned,
+      duration: cleaned[cleaned.length - 1].t,
       source,
+      dominantHand,
     };
     try {
       const saved = await api.createRecording(draft);

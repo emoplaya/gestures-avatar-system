@@ -12,5 +12,14 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+    // Бекенд пишет в server/data/*.json при каждом изменении жеста.
+    // Без этого исключения Vite видит изменение файла и триггерит full
+    // reload — страница перезагружается на каждое сохранение/удаление.
+    watch: {
+      ignored: [
+        "**/server/data/**",
+        "**/server/**",
+      ],
+    },
   },
 });
