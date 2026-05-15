@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
 import {
-  IconRec, IconStop, IconClose, IconGraduation, IconTrash, IconCheck,
+  IconRec, IconStop, IconClose,
 } from "./icons";
-import { TemplateMatcher } from "../utils/templateMatcher";
-import { processVideoFile } from "../utils/videoToGesture";
+import { TemplateMatcher, extractFeatures } from "../utils/templateMatcher";
+import { processVideoFile, trimToMotionWindow } from "../utils/videoToGesture";
 
 /**
- * Режим «Обучи-покажи»:
+ * Режим «Обучение»:
  *   1. Пользователь записывает эталонные жесты (метка + 1-2 секунды записи).
  *   2. В режиме распознавания эталоны сравниваются с живым потоком через DTW.
  *
@@ -246,11 +246,11 @@ export const TemplateMode = ({ onRecognized }) => {
     setVideoProgress(0);
 
     try {
-      const frames = await processVideoFile(file, (p) => setVideoProgress(p));
+      const rawFrames = await processVideoFile(file, (p) => setVideoProgress(p));
 
       // DTW-эталон: только кадры, где видно одну руку (берём правую,
       // если её нет — левую, как в live-режиме).
-      const handFrames = frames
+      const handFrames = rawFrames
         .map((f) => ({
           lm: f.rightHandLandmarks || f.leftHandLandmarks || null,
           t: f.t,
@@ -264,14 +264,23 @@ export const TemplateMode = ({ onRecognized }) => {
         );
       }
 
+      // Видео часто содержит «лишние» статичные кадры до/после жеста:
+      // рука уже в кадре, но ещё не двигается. Без обрезки эти кадры
+      // становятся ключевыми (Δ ≈ 0), и эталон сравнивается со «средним»,
+      // а не с реальным движением — отсюда дистанции 1.5+.
+      const trimmed = trimToMotionWindow(
+        handFrames,
+        (f) => extractFeatures(f.lm),
+      );
+
       const finalLabel = label.trim().toUpperCase();
-      matcherRef.current.addTemplate(finalLabel, handFrames);
+      matcherRef.current.addTemplate(finalLabel, trimmed);
       refreshTemplates();
 
       // И сразу сохраняем как анимацию — в видео-сценарии это всегда
       // имеет смысл (пользователь явно загрузил готовое видео жеста).
       // Помечаем источник как "video", чтобы в плеере было видно.
-      await importRecording(finalLabel, frames, "video");
+      await importRecording(finalLabel, rawFrames, "video");
 
       setLabel("");
       setVideoStatus("idle");

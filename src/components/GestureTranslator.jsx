@@ -6,27 +6,31 @@ import {
 import { TemplateMode } from "./TemplateMode";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
-import { useDatasetRecorder, SAMPLE_MS } from "../utils/datasetRecorder";
 import {
-  IconHand, IconFilm, IconUsers, IconGraduation, IconMirror,
-  IconClose, IconTrash, IconArrowRight, IconRec, IconStop, IconPlay, IconCheck,
+  IconHand, IconFilm, IconGraduation, IconMirror,
+  IconClose, IconTrash, IconCheck,
 } from "./icons";
-
-const DACTYL_LETTERS = [
-  "А","Б","В","Г","Д","Е","Ё","Ж","З","И","Й","К","Л","М","Н","О","П",
-  "Р","С","Т","У","Ф","Х","Ц","Ч","Ш","Щ","Ъ","Ы","Ь","Э","Ю","Я",
-];
 
 const HOLD_MS = 900;
 const COOLDOWN_MS = 1200;
 const DACTYL_HOLD_MS = 700;
 const DACTYL_COOLDOWN_MS = 600;
 
+// Метаданные режимов. Порядок здесь определяет порядок кнопок в панели.
+const MODE_META = {
+  gesture: { label: "Жесты",    title: "Распознавание РЖЯ", icon: <IconHand size={18} /> },
+  dactyl:  { label: "Дактиль",  title: "Дактильная азбука", icon: <IconHand size={18} /> },
+  mirror:  { label: "Зеркало",  title: "Зеркало",           icon: <IconMirror size={18} /> },
+  teach:   { label: "Обучение", title: "Обучение",          icon: <IconGraduation size={18} /> },
+  record:  { label: "Запись",   title: "Запись жестов",     icon: <IconFilm size={18} /> },
+};
+const MODES = Object.entries(MODE_META).map(([id, m]) => ({ id, label: m.label }));
+
 export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
   const setGestureCallback = useVideoRecognition((s) => s.setGestureCallback);
   const videoElement = useVideoRecognition((s) => s.videoElement);
 
-  const [mode, setMode] = useState("gesture"); // "gesture" | "dactyl" | "record" | "dataset"
+  const [mode, setMode] = useState("gesture"); // gesture | dactyl | mirror | teach | record
   const [currentGesture, setCurrentGesture] = useState(null);
   const [holdProgress, setHoldProgress] = useState(0);
   const [words, setWords] = useState([]);
@@ -56,36 +60,6 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
   const [showRecordings, setShowRecordings] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const recTimerRef = useRef(null);
-
-  // ===== Сбор датасета (исследование) =====
-  const datasetSamples = useDatasetRecorder((s) => s.samples);
-  const datasetIsRecording = useDatasetRecorder((s) => s.isRecording);
-  const datasetStartSample = useDatasetRecorder((s) => s.startSample);
-  const datasetAddFrame = useDatasetRecorder((s) => s.addFrame);
-  const datasetCancelSample = useDatasetRecorder((s) => s.cancelSample);
-  const datasetExportJSONL = useDatasetRecorder((s) => s.exportJSONL);
-  const datasetClearAll = useDatasetRecorder((s) => s.clearAll);
-  const datasetGetStats = useDatasetRecorder((s) => s.getStats);
-  const datasetSubject = useDatasetRecorder((s) => s.subjectId);
-  const datasetSetSubject = useDatasetRecorder((s) => s.setSubjectId);
-
-  const [datasetLetter, setDatasetLetter] = useState("А");
-  const [datasetProgress, setDatasetProgress] = useState(0);
-  const datasetStartRef = useRef(0);
-
-  useEffect(() => {
-    if (!datasetIsRecording) {
-      setDatasetProgress(0);
-      return;
-    }
-    datasetStartRef.current = Date.now();
-    const id = setInterval(() => {
-      setDatasetProgress(
-        Math.min((Date.now() - datasetStartRef.current) / SAMPLE_MS, 1),
-      );
-    }, 50);
-    return () => clearInterval(id);
-  }, [datasetIsRecording]);
 
   // Таймер записи (для индикатора)
   useEffect(() => {
@@ -117,12 +91,6 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
         dactylHoldStartRef.current = null;
         lastDactylIdRef.current = null;
         return;
-      }
-
-      // Запись сэмпла датасета (исследование)
-      if (datasetIsRecording) {
-        const rulePred = recognizeDactylLetter(lm);
-        datasetAddFrame(lm, rulePred ? rulePred.letter : null);
       }
 
       // Режим жестов
@@ -203,15 +171,8 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
           }
         }
       }
-
-      // Режим динамических букв (таргетированный).
     },
-    [
-      mode,
-      onDactylLetterRecognized,
-      datasetIsRecording,
-      datasetAddFrame,
-    ],
+    [mode, onDactylLetterRecognized],
   );
 
   useEffect(() => {
@@ -238,33 +199,9 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
       {/* Заголовок */}
       <div style={styles.header}>
         <span style={{ display: "inline-flex", alignItems: "center" }}>
-          {mode === "dactyl" ? (
-            <IconHand size={18} />
-          ) : mode === "record" ? (
-            <IconFilm size={18} />
-          ) : mode === "dataset" ? (
-            <IconUsers size={18} />
-          ) : mode === "teach" ? (
-            <IconGraduation size={18} />
-          ) : mode === "mirror" ? (
-            <IconMirror size={18} />
-          ) : (
-            <IconHand size={18} />
-          )}
+          {MODE_META[mode].icon}
         </span>
-        <span>
-          {mode === "dactyl"
-            ? "Дактильная азбука"
-            : mode === "record"
-              ? "Запись жестов"
-              : mode === "dataset"
-                ? "Сбор датасета"
-                : mode === "teach"
-                  ? "Обучение"
-                  : mode === "mirror"
-                    ? "Зеркало"
-                    : "Распознавание РЖЯ"}
-        </span>
+        <span>{MODE_META[mode].title}</span>
         {(words.length > 0 || dactylText) && (
           <button
             onClick={() => {
@@ -279,17 +216,9 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
         )}
       </div>
 
-      {/* Переключатель режимов — сетка 3×2, чтобы все 6 кнопок помещались
-          без горизонтальной прокрутки и без обрезания подписей. */}
+      {/* Переключатель режимов — сетка 3×2 (5 кнопок, последняя ячейка пустая). */}
       <div style={styles.modeBar}>
-        {[
-          { id: "gesture", label: "Жесты" },
-          { id: "dactyl",  label: "Дактиль" },
-          { id: "mirror",  label: "Зеркало" },
-          { id: "teach",   label: "Обучи" },
-          { id: "record",  label: "Запись" },
-          { id: "dataset", label: "Датасет" },
-        ].map((m) => (
+        {MODES.map((m) => (
           <button
             key={m.id}
             onClick={() => setMode(m.id)}
@@ -374,7 +303,6 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
             <div style={styles.placeholder}>Покажите дактильную букву</div>
           )}
 
-
           {dactylText && (
             <div style={styles.dactylTextBox}>
               <div
@@ -423,7 +351,7 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
         </div>
       )}
 
-      {/* ===== РЕЖИМ «ОБУЧИ-ПОКАЖИ» (template matching, DTW) ===== */}
+      {/* ===== РЕЖИМ «ОБУЧЕНИЕ» (template matching, DTW) ===== */}
       {mode === "teach" && (
         <TemplateMode onRecognized={onDactylLetterRecognized} />
       )}
@@ -565,128 +493,6 @@ export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
               Записей пока нет.
             </div>
           )}
-        </div>
-      )}
-
-      {/* ===== РЕЖИМ СБОРА ДАТАСЕТА ===== */}
-      {mode === "dataset" && (
-        <div style={styles.recordSection}>
-          <div style={{ fontSize: "11px", color: "#888", marginBottom: "6px" }}>
-            Статья 1: сбор размеченных сэмплов для обучения классификатора.
-            Каждый сэмпл — {SAMPLE_MS / 1000} с, landmarks 21×3 + бейзлайн.
-          </div>
-
-          <input
-            type="text"
-            placeholder="ID испытуемого (напр. P01)"
-            value={datasetSubject}
-            onChange={(e) => datasetSetSubject(e.target.value)}
-            style={{ ...styles.recInput, width: "100%", marginBottom: "6px" }}
-          />
-
-          <div
-            style={{ display: "flex", gap: "4px", marginBottom: "6px" }}
-          >
-            <select
-              value={datasetLetter}
-              onChange={(e) => setDatasetLetter(e.target.value)}
-              disabled={datasetIsRecording}
-              style={{ ...styles.recInput, flex: 1 }}
-            >
-              {DACTYL_LETTERS.map((l) => (
-                <option key={l} value={l}>
-                  {l} ({datasetGetStats().byLetter[l] || 0})
-                </option>
-              ))}
-            </select>
-            {!datasetIsRecording ? (
-              <button
-                onClick={() => datasetStartSample(datasetLetter)}
-                style={{
-                  ...styles.smallBtn,
-                  background: "#4ade80",
-                  color: "#000",
-                  padding: "4px 12px",
-                  fontWeight: 700,
-                }}
-              >
-                <span style={{ fontSize: "10px", lineHeight: 1 }}>●</span>
-                <span>REC</span>
-              </button>
-            ) : (
-              <button
-                onClick={datasetCancelSample}
-                style={{
-                  ...styles.smallBtn,
-                  background: "#ef4444",
-                  padding: "4px 12px",
-                }}
-              >
-                <IconClose size={11} /><span>Отмена</span>
-              </button>
-            )}
-          </div>
-
-          {datasetIsRecording && (
-            <>
-              <div
-                style={{
-                  fontSize: "24px",
-                  fontWeight: 900,
-                  color: "#4ade80",
-                  textAlign: "center",
-                  marginBottom: "4px",
-                }}
-              >
-                {datasetLetter}
-              </div>
-              <ProgressBar value={datasetProgress} />
-            </>
-          )}
-
-          <div
-            style={{
-              marginTop: "10px",
-              fontSize: "11px",
-              color: "#aaa",
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>Всего: {datasetSamples.length}</span>
-            <span>
-              Букв:{" "}
-              {Object.keys(datasetGetStats().byLetter).length}/
-              {DACTYL_LETTERS.length}
-            </span>
-          </div>
-
-          <div style={{ display: "flex", gap: "4px", marginTop: "8px" }}>
-            <button
-              onClick={datasetExportJSONL}
-              disabled={datasetSamples.length === 0}
-              style={{
-                ...styles.smallBtn,
-                flex: 2,
-                background: "#818cf8",
-                opacity: datasetSamples.length === 0 ? 0.4 : 1,
-              }}
-            >
-              Скачать JSONL
-            </button>
-            <button
-              onClick={() => {
-                if (confirm("Удалить все сэмплы?")) datasetClearAll();
-              }}
-              style={{
-                ...styles.smallBtn,
-                flex: 1,
-                background: "rgba(239,68,68,0.3)",
-              }}
-            >
-              Очистить
-            </button>
-          </div>
         </div>
       )}
 
