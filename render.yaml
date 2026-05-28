@@ -24,7 +24,9 @@ services:
     name: vrm4
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    # --include=dev обязателен: NODE_ENV=production заставляет npm
+    # пропускать devDependencies, а Vite/плагины живут там.
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node server/index.js
     # Render слушает порт из переменной PORT — Express это уже учитывает.
     envVars:
