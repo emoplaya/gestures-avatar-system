@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
+import { useAdmin } from "../hooks/useAdmin";
 import { IconFilm, IconPlay, IconStop, IconTrash } from "./icons";
 
 /**
@@ -23,6 +24,7 @@ export const AnimationPlayer = () => {
   const getPlaybackDelay = useGestureRecorder((s) => s.getPlaybackDelay);
   const deleteRecording = useGestureRecorder((s) => s.deleteRecording);
   const renameRecording = useGestureRecorder((s) => s.renameRecording);
+  const isAdmin = useAdmin((s) => s.isAdmin);
 
   const [selectedId, setSelectedId] = useState(null);
   const [renamingId, setRenamingId] = useState(null);
@@ -135,7 +137,9 @@ export const AnimationPlayer = () => {
             Нет сохранённых анимаций.
             <br />
             <span style={{ color: "#aaa", fontSize: "11px" }}>
-              Перейдите в раздел «Интерактив», включите камеру и запишите жест.
+              {isAdmin
+                ? "Перейдите в раздел «Интерактив», включите камеру и запишите жест."
+                : "Администратор ещё не загрузил жесты."}
             </span>
           </div>
         ) : (
@@ -179,8 +183,9 @@ export const AnimationPlayer = () => {
                       ) : (
                         <div
                           style={styles.itemName}
-                          title={rec.name}
+                          title={isAdmin ? "Дважды кликните для переименования" : rec.name}
                           onDoubleClick={(e) => {
+                            if (!isAdmin) return;
                             e.stopPropagation();
                             startRename(rec);
                           }}
@@ -195,18 +200,20 @@ export const AnimationPlayer = () => {
                     {isThisPlaying && (
                       <span style={styles.playingDot}><IconPlay size={10} color="#4ade80" /></span>
                     )}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`Удалить запись «${rec.name}»?`)) {
-                          deleteRecording(rec.id);
-                        }
-                      }}
-                      style={styles.deleteBtn}
-                      title="Удалить"
-                    >
-                      <IconTrash size={13} />
-                    </button>
+                    {isAdmin && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Удалить запись «${rec.name}»?`)) {
+                            deleteRecording(rec.id);
+                          }
+                        }}
+                        style={styles.deleteBtn}
+                        title="Удалить"
+                      >
+                        <IconTrash size={13} />
+                      </button>
+                    )}
                   </div>
                 );
               })}

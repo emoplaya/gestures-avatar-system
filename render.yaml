@@ -1,0 +1,42 @@
+# Render Blueprint: один Node-сервис, который раздаёт и API, и собранный фронт.
+#
+# Как использовать:
+#   1. Запушьте репозиторий на GitHub.
+#   2. В Render зайдите в New → Blueprint → выберите ваш репозиторий.
+#   3. Render прочитает этот файл и предложит создать сервис.
+#   4. Установите ADMIN_PASSWORD в Environment variables (см. ниже).
+#   5. Deploy. Через ~5 мин сервис будет на https://<имя>.onrender.com.
+#
+# Хранилище данных на бесплатном плане:
+#   Бесплатный план Render НЕ поддерживает persistent disks. Поэтому записи
+#   и эталоны хранятся в server/data/*.json внутри репозитория — сервер их
+#   копирует на старте при каждом запуске. Чтобы добавить новые жесты:
+#     - запишите их локально (npm run dev:all);
+#     - закоммитьте server/data/recordings.json и templates.json;
+#     - push → Render автодеплоит → у всех новые жесты.
+#
+#   Если нужна возможность писать жесты прямо на деплое (без коммитов),
+#   переключитесь на платный план (от ~$7/мес) и раскомментируйте блок disk:
+#   ниже, а также добавьте env DATA_DIR=/var/data.
+
+services:
+  - type: web
+    name: vrm4
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    # Render слушает порт из переменной PORT — Express это уже учитывает.
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ADMIN_PASSWORD
+        sync: false   # секрет — задайте вручную в дашборде
+    # ===== Для платного плана: включите persistent disk =====
+    # disk:
+    #   name: vrm4-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # И добавьте env var:
+    #   - key: DATA_DIR
+    #     value: /var/data

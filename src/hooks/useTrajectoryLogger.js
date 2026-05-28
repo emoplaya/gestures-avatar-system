@@ -4,9 +4,18 @@ import { create } from "zustand";
  * Логгер траекторий рук — для офлайн-анализа моментов фиксации жеста.
  *
  * На каждом кадре пишет 21 точку (x,y,z) обеих рук + производные величины:
- *  - суммарное смещение по L1 (Σ|Δxᵢ| + |Δyᵢ|) — «скорость» облака точек
- *  - то же самое, но относительно запястья (убирает глобальное движение руки)
- *  - суммарная скорость изменения углов в 15 суставах (три на палец × 5)
+ *
+ *  Velocity-каналы (отклонение от ПРЕДЫДУЩЕГО кадра):
+ *    - delta_l1        — Σ|Δxᵢ|+|Δyᵢ|+|Δzᵢ| по 21 точке
+ *    - delta_l1_wrist  — то же, но с вычетом смещения запястья
+ *    - delta_angles    — суммарное изменение углов в 15 суставах
+ *
+ *  Displacement-каналы (отклонение от ПЕРВОГО валидного кадра — baseline):
+ *    - delta_base_l1        — Σᵢ |posᵢ(t) − posᵢ(0)|
+ *    - delta_base_l1_wrist  — то же, но в системе координат запястья
+ *
+ *  Velocity → минимумы = моменты фиксации руки
+ *  Displacement → максимумы и плато = крайние положения / поза удерживается
  *
  * Запись стартует по начальной позиции (первый кадр = baseline) и ведётся
  * до остановки. После остановки — экспорт в CSV.
@@ -68,14 +77,17 @@ export const useTrajectoryLogger = create((set, get) => ({
   /**
    * Экспорт в CSV. Один кадр = одна строка.
    * Колонки:
-   *  - t               (мс от старта)
-   *  - missing         (1 если руки не было в кадре)
-   *  - delta_l1        (Σ|Δx|+|Δy| по 21 точке, относительно ПРЕДЫДУЩЕГО кадра)
-   *  - delta_l1_wrist  (то же, но с вычетом смещения запястья — «чистая форма»)
-   *  - delta_angles    (сумма |Δугла| по 15 суставам, радианы)
+   *  - t                    (мс от старта)
+   *  - missing              (1 если руки не было в кадре)
+   *  - delta_l1             (Σ|Δx|+|Δy|+|Δz| по 21 точке, от ПРЕДЫДУЩЕГО кадра — velocity)
+   *  - delta_l1_wrist       (то же, но с вычетом смещения запястья — «чистая форма»)
+   *  - delta_angles         (сумма |Δугла| по 15 суставам, радианы — angular velocity)
+   *  - delta_base_l1        (Σᵢ |posᵢ(t) − posᵢ(0)| — отклонение от baseline)
+   *  - delta_base_l1_wrist  (то же, в системе координат запястья)
    *  - x0..x20, y0..y20, z0..z20  (сырые координаты 21 точки)
    *
-   * Для каждого производного канала первая строка = NaN (нет предыдущего кадра).
+   * Для velocity-каналов (delta_l1*, delta_angles) первая строка = "" (нет предыдущего).
+   * Для displacement-каналов (delta_base_*) первая строка = 0 (отклонения от себя нет).
    */
   exportCSV: () => {
     const state = get();
@@ -84,19 +96,25 @@ export const useTrajectoryLogger = create((set, get) => ({
     const header = [
       "t", "missing",
       "delta_l1", "delta_l1_wrist", "delta_angles",
+      "delta_base_l1", "delta_base_l1_wrist",
     ];
     for (let i = 0; i < 21; i++) header.push(`x${i}`, `y${i}`, `z${i}`);
 
     const rows = [header.join(",")];
     let prev = null;
+    let baseline = null; // первый валидный кадр — точка отсчёта для displacement
 
     for (const f of state.frames) {
       if (f.missing || !f.lm) {
         const empty = new Array(21 * 3).fill("").join(",");
-        rows.push([f.t, 1, "", "", "", empty].join(","));
+        rows.push([f.t, 1, "", "", "", "", "", empty].join(","));
         prev = null;
+        // baseline НЕ сбрасываем — пропуски кадров посреди записи
+        // не должны менять точку отсчёта для всей сессии
         continue;
       }
+
+      if (!baseline) baseline = f.lm; // фиксируем baseline на первом валидном кадре
 
       let dL1 = "", dL1Wrist = "", dAng = "";
       if (prev) {
@@ -105,12 +123,17 @@ export const useTrajectoryLogger = create((set, get) => ({
         dAng = sumAngleChange(f.lm, prev);
       }
 
+      // Δ от baseline (для гипотезы об экстремумах смещения)
+      const dBase = sumL1(f.lm, baseline);
+      const dBaseWrist = sumL1Wrist(f.lm, baseline);
+
       const coords = [];
       for (const p of f.lm) coords.push(p.x, p.y, p.z);
 
       rows.push([
         f.t, 0,
         fmt(dL1), fmt(dL1Wrist), fmt(dAng),
+        fmt(dBase), fmt(dBaseWrist),
         ...coords.map(fmt),
       ].join(","));
 

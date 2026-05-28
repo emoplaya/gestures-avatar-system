@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
+import { useAdmin } from "../hooks/useAdmin";
 import { TemplateMatcher } from "../utils/templateMatcher";
 import {
   IconText, IconHand, IconPlay, IconStop, IconCamera, IconCameraOff,
@@ -210,6 +211,7 @@ export const TranslateMode = ({ onRecognizeActive }) => {
 // ================= Подрежим: текст → жест =================
 
 const FromTextPanel = ({ recordings, playRecording, stopPlayback, setLastTranslated }) => {
+  const isAdmin = useAdmin((s) => s.isAdmin);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("idle"); // idle | playing
   const [queue, setQueue] = useState([]);
@@ -319,8 +321,9 @@ const FromTextPanel = ({ recordings, playRecording, stopPlayback, setLastTransla
 
       {recordings.length === 0 && (
         <div style={styles.warn}>
-          Нет записанных жестов. Перейдите на вкладку «Интерактив» → «Обучение»,
-          запишите жест, и при сохранении согласитесь добавить его как анимацию.
+          {isAdmin
+            ? "Нет записанных жестов. Перейдите на вкладку «Интерактив» → «Обучение», запишите жест, и при сохранении согласитесь добавить его как анимацию."
+            : "Администратор ещё не загрузил ни одного жеста."}
         </div>
       )}
 
@@ -389,6 +392,7 @@ const RecognizeGesturePanel = ({
   setTranslatedState,
   avatarCbRef,
 }) => {
+  const isAdmin = useAdmin((s) => s.isAdmin);
   // Статусы: idle (ждём жест) | playing (проигрываем ответ)
   const [status, setStatus] = useState("idle");
   const [cameraOn, setCameraOn] = useState(false);
@@ -573,9 +577,9 @@ const RecognizeGesturePanel = ({
 
       {templatesCount === 0 ? (
         <div style={styles.warn}>
-          Нет записанных эталонов. Сначала запишите жесты во вкладке
-          «Интерактив» → «Обучение» и при сохранении согласитесь добавить
-          их как анимации.
+          {isAdmin
+            ? "Нет записанных эталонов. Сначала запишите жесты во вкладке «Интерактив» → «Обучение» и при сохранении согласитесь добавить их как анимации."
+            : "Администратор ещё не записал ни одного жеста для распознавания."}
         </div>
       ) : (
         <>

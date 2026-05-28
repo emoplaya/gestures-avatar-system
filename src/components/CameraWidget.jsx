@@ -75,7 +75,11 @@ export const CameraWidget = ({ active = false }) => {
       // Останавливаем камеру (MediaPipe-стрим), но инстансы сохраняем —
       // при следующем включении не будем заново загружать модели.
       if (cameraRef.current) {
-        try { cameraRef.current.stop(); } catch { /* ignore */ }
+        try {
+          cameraRef.current.stop();
+        } catch {
+          /* ignore */
+        }
       }
       // Отвязываемся от стрима браузера полностью, чтобы лампочка погасла.
       if (videoElement.current && videoElement.current.srcObject) {
@@ -157,7 +161,7 @@ export const CameraWidget = ({ active = false }) => {
       </div>
 
       {/* Виджет логгера траекторий — виден только когда камера включена */}
-      {/* {active && (
+      {active && (
         <div style={loggerStyles.box}>
           <div style={loggerStyles.header}>
             <span>📈</span> Лог траектории
@@ -166,7 +170,11 @@ export const CameraWidget = ({ active = false }) => {
             <>
               <button
                 onClick={() => logStart()}
-                style={{ ...loggerStyles.btn, background: "#4ade80", color: "#000" }}
+                style={{
+                  ...loggerStyles.btn,
+                  background: "#4ade80",
+                  color: "#000",
+                }}
               >
                 ● Старт лога
               </button>
@@ -181,7 +189,10 @@ export const CameraWidget = ({ active = false }) => {
                     </button>
                     <button
                       onClick={logClear}
-                      style={{ ...loggerStyles.btn, background: "rgba(239,68,68,0.3)" }}
+                      style={{
+                        ...loggerStyles.btn,
+                        background: "rgba(239,68,68,0.3)",
+                      }}
                     >
                       ✕ Очистить
                     </button>
@@ -192,7 +203,8 @@ export const CameraWidget = ({ active = false }) => {
           ) : (
             <>
               <div style={loggerStyles.rec}>
-                ● REC  <span style={{ color: "#aaa" }}>{logFrames.length} кадров</span>
+                ● REC{" "}
+                <span style={{ color: "#aaa" }}>{logFrames.length} кадров</span>
               </div>
               <button
                 onClick={logStop}
@@ -203,11 +215,11 @@ export const CameraWidget = ({ active = false }) => {
             </>
           )}
           <div style={loggerStyles.hint}>
-            Покажите всю последовательность букв слитно.
-            Потом выгрузите CSV и откройте в анализаторе.
+            Покажите всю последовательность букв слитно. Потом выгрузите CSV и
+            откройте в анализаторе.
           </div>
         </div>
-      )} */}
+      )}
     </>
   );
 };

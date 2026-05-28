@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { IconRotate, IconMenu, IconChevronDown } from "./icons";
+import { useAdmin } from "../hooks/useAdmin";
 
 const VRM_MODELS = [
   { file: "ivan.vrm", name: "Иван" },
@@ -193,6 +194,11 @@ export const ControlPanel = ({
         </Section>
       )}
 
+      {/* ===== Админ-доступ ===== */}
+      <Section title="Админ" defaultOpen={false}>
+        <AdminBlock />
+      </Section>
+
       <style>{`
         .cp, .cp * {
           box-sizing: border-box;
@@ -235,6 +241,91 @@ export const ControlPanel = ({
     </div>
   );
 };
+
+function AdminBlock() {
+  const isAdmin = useAdmin((s) => s.isAdmin);
+  const error = useAdmin((s) => s.error);
+  const login = useAdmin((s) => s.login);
+  const logout = useAdmin((s) => s.logout);
+
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const handleLogin = async () => {
+    if (!password.trim()) return;
+    setBusy(true);
+    const ok = await login(password.trim());
+    setBusy(false);
+    if (ok) setPassword("");
+  };
+
+  if (isAdmin) {
+    return (
+      <div>
+        <div style={{ ...styles.hint, marginTop: 0, color: "#4ade80" }}>
+          Режим администратора активен. Доступны «Обучение», «Запись»,
+          удаление и переименование записей.
+        </div>
+        <button
+          onClick={logout}
+          style={{
+            ...styles.actionBtn,
+            width: "100%",
+            marginTop: 8,
+            background: "rgba(239,68,68,0.15)",
+            border: "1px solid #ef4444",
+            color: "#ef4444",
+          }}
+        >
+          Выйти из админа
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ ...styles.hint, marginTop: 0 }}>
+        Войдите как админ, чтобы записывать и редактировать жесты. Обычным
+        пользователям доступны только «Анимации» и «Перевод».
+      </div>
+      <input
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+        placeholder="Пароль администратора"
+        disabled={busy}
+        style={{
+          ...styles.select,
+          marginTop: 8,
+          padding: "8px 10px",
+        }}
+      />
+      {error && (
+        <div style={{ fontSize: 11, color: "#ef4444", marginTop: 6 }}>
+          {error}
+        </div>
+      )}
+      <button
+        onClick={handleLogin}
+        disabled={busy || !password.trim()}
+        style={{
+          ...styles.actionBtn,
+          width: "100%",
+          marginTop: 8,
+          background: "rgba(79, 195, 247, 0.15)",
+          border: "1px solid #4FC3F7",
+          color: "#4FC3F7",
+          opacity: busy || !password.trim() ? 0.5 : 1,
+          cursor: busy || !password.trim() ? "not-allowed" : "pointer",
+        }}
+      >
+        {busy ? "Проверка…" : "Войти"}
+      </button>
+    </div>
+  );
+}
 
 function Section({ title, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);

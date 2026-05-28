@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   recognizeGesture,
   recognizeDactylLetter,
@@ -6,6 +6,7 @@ import {
 import { TemplateMode } from "./TemplateMode";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
+import { useAdmin } from "../hooks/useAdmin";
 import {
   IconHand, IconFilm, IconGraduation, IconMirror,
   IconClose, IconTrash, IconCheck,
@@ -17,20 +18,40 @@ const DACTYL_HOLD_MS = 700;
 const DACTYL_COOLDOWN_MS = 600;
 
 // Метаданные режимов. Порядок здесь определяет порядок кнопок в панели.
+// Свойство adminOnly=true означает, что режим доступен только админу.
 const MODE_META = {
   gesture: { label: "Жесты",    title: "Распознавание РЖЯ", icon: <IconHand size={18} /> },
   dactyl:  { label: "Дактиль",  title: "Дактильная азбука", icon: <IconHand size={18} /> },
   mirror:  { label: "Зеркало",  title: "Зеркало",           icon: <IconMirror size={18} /> },
-  teach:   { label: "Обучение", title: "Обучение",          icon: <IconGraduation size={18} /> },
-  record:  { label: "Запись",   title: "Запись жестов",     icon: <IconFilm size={18} /> },
+  teach:   { label: "Обучение", title: "Обучение",          icon: <IconGraduation size={18} />, adminOnly: true },
+  record:  { label: "Запись",   title: "Запись жестов",     icon: <IconFilm size={18} />, adminOnly: true },
 };
-const MODES = Object.entries(MODE_META).map(([id, m]) => ({ id, label: m.label }));
 
 export const GestureTranslator = ({ onDactylLetterRecognized } = {}) => {
   const setGestureCallback = useVideoRecognition((s) => s.setGestureCallback);
   const videoElement = useVideoRecognition((s) => s.videoElement);
+  const isAdmin = useAdmin((s) => s.isAdmin);
+
+  // Список доступных режимов с учётом роли — обычному пользователю
+  // видны только Жесты / Дактиль / Зеркало.
+  const MODES = useMemo(
+    () =>
+      Object.entries(MODE_META)
+        .filter(([, m]) => isAdmin || !m.adminOnly)
+        .map(([id, m]) => ({ id, label: m.label })),
+    [isAdmin],
+  );
 
   const [mode, setMode] = useState("gesture"); // gesture | dactyl | mirror | teach | record
+
+  // Если пользователь сидел в админском режиме и разлогинился — переключим
+  // на безопасный «жесты», иначе UI зависнет на скрытой кнопке.
+  useEffect(() => {
+    const def = MODE_META[mode];
+    if (!def || (def.adminOnly && !isAdmin)) {
+      setMode("gesture");
+    }
+  }, [isAdmin, mode]);
   const [currentGesture, setCurrentGesture] = useState(null);
   const [holdProgress, setHoldProgress] = useState(0);
   const [words, setWords] = useState([]);

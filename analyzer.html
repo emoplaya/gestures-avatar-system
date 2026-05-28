@@ -64,8 +64,8 @@
 </head>
 <body>
 <header>
-  <h1>📈 Анализатор траекторий дактиля v2</h1>
-  <p>HOLD-MOVE-HOLD сегментация. Для настройки правил динамических букв (Й, Р, Ц, Ч, Щ, Ы, Ь, Ъ).</p>
+  <h1>Анализатор траекторий дактиля v3</h1>
+  <p>HOLD-MOVE сегментация по velocity (минимумы) или displacement от baseline (максимумы). Для исследования экстремумов Δ(t) — статья АИСТ.</p>
 </header>
 
 <div class="wrap">
@@ -77,12 +77,18 @@
       <div class="row">
         <label>Канал</label>
         <select id="channel">
-          <option value="delta_l1_wrist" selected>Δ формы (без кисти)</option>
-          <option value="delta_l1">Δ сырое</option>
-          <option value="delta_angles">Δ углов</option>
+          <option value="delta_l1_wrist" selected>Velocity: Δ формы (без кисти)</option>
+          <option value="delta_l1">Velocity: Δ сырое</option>
+          <option value="delta_angles">Velocity: Δ углов</option>
+          <option value="delta_base_l1_wrist">Displacement: Δ от baseline (без кисти)</option>
+          <option value="delta_base_l1">Displacement: Δ от baseline</option>
         </select>
       </div>
       <div class="row check"><label>Сглаживание</label><input id="smooth" type="number" value="5" min="1" max="21" step="2" /></div>
+      <div style="font-size:10px;color:#888;line-height:1.4;margin-top:4px;">
+        Velocity → ищем <b>минимумы</b> (рука замерла).<br/>
+        Displacement → ищем <b>плато на максимумах</b> (поза удерживается).
+      </div>
     </div>
 
     <div class="group">
@@ -184,6 +190,8 @@ function parseCSV(text) {
       delta_l1: row.delta_l1 ? +row.delta_l1 : null,
       delta_l1_wrist: row.delta_l1_wrist ? +row.delta_l1_wrist : null,
       delta_angles: row.delta_angles ? +row.delta_angles : null,
+      delta_base_l1: row.delta_base_l1 !== undefined && row.delta_base_l1 !== "" ? +row.delta_base_l1 : null,
+      delta_base_l1_wrist: row.delta_base_l1_wrist !== undefined && row.delta_base_l1_wrist !== "" ? +row.delta_base_l1_wrist : null,
     };
     r.lm = [];
     for (let k = 0; k < 21; k++) {
@@ -193,7 +201,37 @@ function parseCSV(text) {
     }
     out.push(r);
   }
+
+  // Fallback: если CSV старый (нет колонок delta_base_*), считаем на лету.
+  const hasBase = out.some((r) => r.delta_base_l1 !== null);
+  if (!hasBase) {
+    let baseline = null;
+    for (const r of out) {
+      if (!r.lm) continue;
+      if (!baseline) { baseline = r.lm; r.delta_base_l1 = 0; r.delta_base_l1_wrist = 0; continue; }
+      r.delta_base_l1 = sumL1Pts(r.lm, baseline);
+      r.delta_base_l1_wrist = sumL1WristPts(r.lm, baseline);
+    }
+  }
+
   return out;
+}
+
+function sumL1Pts(curr, prev) {
+  let s = 0;
+  for (let i = 0; i < 21; i++) {
+    s += Math.abs(curr[i].x - prev[i].x) + Math.abs(curr[i].y - prev[i].y) + Math.abs(curr[i].z - prev[i].z);
+  }
+  return s;
+}
+
+function sumL1WristPts(curr, prev) {
+  const dxW = curr[0].x - prev[0].x, dyW = curr[0].y - prev[0].y, dzW = curr[0].z - prev[0].z;
+  let s = 0;
+  for (let i = 1; i < 21; i++) {
+    s += Math.abs(curr[i].x - prev[i].x - dxW) + Math.abs(curr[i].y - prev[i].y - dyW) + Math.abs(curr[i].z - prev[i].z - dzW);
+  }
+  return s;
 }
 
 function movingAverage(arr, window) {
@@ -212,21 +250,29 @@ function movingAverage(arr, window) {
   return out;
 }
 
-function findKeyframes(sig, threshold, minHoldMs, minGapMs, times) {
+// mode: "low"  — ищем низкие зоны сигнала (для velocity: рука замерла)
+// mode: "high" — ищем высокие зоны (для displacement: поза удерживается)
+function findKeyframes(sig, threshold, minHoldMs, minGapMs, times, mode = "low") {
   if (sig.length === 0) return { keyframes: [], motionRanges: [] };
-  let maxV = -Infinity;
-  for (const v of sig) if (v !== null && !isNaN(v) && v > maxV) maxV = v;
-  if (maxV <= 0) return { keyframes: [], motionRanges: [] };
-  const cutoff = threshold * maxV;
+  let maxV = -Infinity, minV = Infinity;
+  for (const v of sig) if (v !== null && !isNaN(v)) { if (v > maxV) maxV = v; if (v < minV) minV = v; }
+  if (maxV <= minV) return { keyframes: [], motionRanges: [] };
 
-  const lows = []; let start = -1;
+  // Условие «зона удержания»:
+  //   low-режим: v <= threshold * maxV       (velocity около нуля)
+  //   high-режим: v >= (1 - threshold) * maxV (displacement около пика)
+  const cutoff = mode === "high" ? (1 - threshold) * maxV : threshold * maxV;
+  const isHold = mode === "high"
+    ? (v) => v !== null && v >= cutoff
+    : (v) => v !== null && v <= cutoff;
+
+  const zones = []; let start = -1;
   for (let i = 0; i < sig.length; i++) {
-    const v = sig[i], isLow = v !== null && v <= cutoff;
-    if (isLow && start === -1) start = i;
-    if (!isLow && start !== -1) { lows.push([start, i - 1]); start = -1; }
+    if (isHold(sig[i]) && start === -1) start = i;
+    if (!isHold(sig[i]) && start !== -1) { zones.push([start, i - 1]); start = -1; }
   }
-  if (start !== -1) lows.push([start, sig.length - 1]);
-  const holds = lows.filter(([a, b]) => times[b] - times[a] >= minHoldMs);
+  if (start !== -1) zones.push([start, sig.length - 1]);
+  const holds = zones.filter(([a, b]) => times[b] - times[a] >= minHoldMs);
   const merged = [];
   for (const [a, b] of holds) {
     if (merged.length && times[a] - times[merged[merged.length - 1][1]] < minGapMs) {
@@ -235,11 +281,14 @@ function findKeyframes(sig, threshold, minHoldMs, minGapMs, times) {
   }
   const kf = [];
   for (const [a, b] of merged) {
-    let minI = a, minV = Infinity;
+    // В low-режиме репрезентативный кадр — минимум сигнала (рука максимально замерла).
+    // В high-режиме — максимум (поза наиболее «выражена»).
+    let bestI = a, bestV = mode === "high" ? -Infinity : Infinity;
     for (let i = a; i <= b; i++) {
-      const v = sig[i]; if (v !== null && v < minV) { minV = v; minI = i; }
+      const v = sig[i]; if (v === null) continue;
+      if (mode === "high" ? v > bestV : v < bestV) { bestV = v; bestI = i; }
     }
-    kf.push({ idx: minI, t: times[minI], value: minV, holdStart: a, holdEnd: b, holdMs: times[b] - times[a] });
+    kf.push({ idx: bestI, t: times[bestI], value: bestV, holdStart: a, holdEnd: b, holdMs: times[b] - times[a] });
   }
   const motionRanges = [];
   for (let i = 1; i < merged.length; i++) {
@@ -313,7 +362,8 @@ function run() {
   const raw = rawRows.map((r) => (r.missing ? null : r[channel]));
   signal = movingAverage(raw, window);
   const times = rawRows.map((r) => r.t);
-  const r = findKeyframes(signal, threshold, minHold, minGap, times);
+  const mode = channel.startsWith("delta_base") ? "high" : "low";
+  const r = findKeyframes(signal, threshold, minHold, minGap, times, mode);
   keyframes = r.keyframes;
   motions = r.motionRanges.map((m) => ({ ...m, analysis: analyzeMotion(m, rawRows) }));
   for (let i = 0; i < keyframes.length; i++) keyframes[i].expectedLetter = expected[i] || "";
@@ -384,8 +434,10 @@ function renderChart() {
   ctx.fillStyle = "rgba(245,158,11,0.10)";
   for (const m of motions) { const x1 = x(times[m.from]), x2 = x(times[m.to]); ctx.fillRect(x1, pad.t, x2 - x1, plotH); }
   const threshold = +document.getElementById("threshold").value;
+  const channelV = document.getElementById("channel").value;
+  const cutoffV = channelV.startsWith("delta_base") ? (1 - threshold) * vMax : threshold * vMax;
   ctx.strokeStyle = "#555"; ctx.setLineDash([4, 4]);
-  const yT = y(threshold * vMax);
+  const yT = y(cutoffV);
   ctx.beginPath(); ctx.moveTo(pad.l, yT); ctx.lineTo(W - pad.r, yT); ctx.stroke(); ctx.setLineDash([]);
   ctx.strokeStyle = "#818cf8"; ctx.lineWidth = 1.5; ctx.beginPath();
   let started = false;

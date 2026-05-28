@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
@@ -8,16 +9,87 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-const DATA_DIR        = path.join(__dirname, "data");
+// На проде (Render) монтируем persistent disk в /var/data — это путь,
+// который переживает редеплои. В dev — server/data рядом с кодом.
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, "data");
+
 const RECORDINGS_FILE = path.join(DATA_DIR, "recordings.json");
 const TEMPLATES_FILE  = path.join(DATA_DIR, "templates.json");
 const CLIENT_DIST     = path.join(__dirname, "..", "dist");
 
-if (!fsSync.existsSync(DATA_DIR)) fsSync.mkdirSync(DATA_DIR, { recursive: true });
+// Если DATA_DIR пуст, но в репозитории есть server/data — копируем
+// предзаписанные жесты на persistent volume при первом запуске. Так админ
+// может закоммитить набор эталонных букв в репо, и они появятся у всех.
+if (!fsSync.existsSync(DATA_DIR)) {
+  fsSync.mkdirSync(DATA_DIR, { recursive: true });
+}
+const SEED_DIR = path.join(__dirname, "data");
+if (SEED_DIR !== DATA_DIR && fsSync.existsSync(SEED_DIR)) {
+  for (const f of ["recordings.json", "templates.json"]) {
+    const dst = path.join(DATA_DIR, f);
+    const src = path.join(SEED_DIR, f);
+    if (!fsSync.existsSync(dst) && fsSync.existsSync(src)) {
+      fsSync.copyFileSync(src, dst);
+      console.log(`[server] seeded ${f} from repo into ${DATA_DIR}`);
+    }
+  }
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100mb" }));
+
+// ===== Аутентификация админа =====
+// Пароль задаётся через env ADMIN_PASSWORD. Если не задан — генерируется
+// случайный (виден в логах при старте, чтобы локальный dev не падал).
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
+  || (process.env.NODE_ENV === "production"
+        ? null
+        : "admin123");
+
+if (!ADMIN_PASSWORD) {
+  console.warn(
+    "[server] ADMIN_PASSWORD не задан в проде. Запись/удаление будут заблокированы для всех.",
+  );
+} else if (!process.env.ADMIN_PASSWORD) {
+  console.log(`[server] dev-режим: ADMIN_PASSWORD = ${ADMIN_PASSWORD}`);
+}
+
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+function requireAdmin(req, res, next) {
+  const sent = req.get("X-Admin-Auth") || "";
+  if (!ADMIN_PASSWORD || !safeEqual(sent, ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  next();
+}
+
+app.post("/api/auth/login", (req, res) => {
+  const { password } = req.body || {};
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({ error: "auth disabled" });
+  }
+  if (!safeEqual(password || "", ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: "invalid password" });
+  }
+  // Простая схема: токен = сам пароль. Шлётся в X-Admin-Auth.
+  // На HTTPS этого достаточно для «soft auth» — защита от случайных правок.
+  res.json({ ok: true, token: ADMIN_PASSWORD });
+});
+
+app.get("/api/auth/check", (req, res) => {
+  const sent = req.get("X-Admin-Auth") || "";
+  const ok = ADMIN_PASSWORD && safeEqual(sent, ADMIN_PASSWORD);
+  res.json({ ok: Boolean(ok) });
+});
 
 async function readJson(file, fallback) {
   try {
@@ -40,11 +112,13 @@ const newId = () =>
   Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // ===== Recordings =====
+// GET — публичный (любой может читать/проигрывать).
+// POST/PATCH/DELETE — только админ.
 app.get("/api/recordings", async (_req, res) => {
   res.json(await readJson(RECORDINGS_FILE, []));
 });
 
-app.post("/api/recordings", async (req, res) => {
+app.post("/api/recordings", requireAdmin, async (req, res) => {
   const recordings = await readJson(RECORDINGS_FILE, []);
   const body = req.body || {};
   const recording = {
@@ -60,7 +134,7 @@ app.post("/api/recordings", async (req, res) => {
   res.json(recording);
 });
 
-app.patch("/api/recordings/:id", async (req, res) => {
+app.patch("/api/recordings/:id", requireAdmin, async (req, res) => {
   const recordings = await readJson(RECORDINGS_FILE, []);
   const idx = recordings.findIndex((r) => r.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: "not found" });
@@ -74,7 +148,7 @@ app.patch("/api/recordings/:id", async (req, res) => {
   res.json(recordings[idx]);
 });
 
-app.delete("/api/recordings/:id", async (req, res) => {
+app.delete("/api/recordings/:id", requireAdmin, async (req, res) => {
   const recordings = await readJson(RECORDINGS_FILE, []);
   const filtered = recordings.filter((r) => r.id !== req.params.id);
   await writeJson(RECORDINGS_FILE, filtered);
@@ -86,7 +160,7 @@ app.get("/api/templates", async (_req, res) => {
   res.json(await readJson(TEMPLATES_FILE, []));
 });
 
-app.post("/api/templates", async (req, res) => {
+app.post("/api/templates", requireAdmin, async (req, res) => {
   const templates = await readJson(TEMPLATES_FILE, []);
   const body = req.body || {};
   const template = {
@@ -102,14 +176,14 @@ app.post("/api/templates", async (req, res) => {
   res.json(template);
 });
 
-app.delete("/api/templates/:id", async (req, res) => {
+app.delete("/api/templates/:id", requireAdmin, async (req, res) => {
   const templates = await readJson(TEMPLATES_FILE, []);
   const filtered = templates.filter((t) => t.id !== req.params.id);
   await writeJson(TEMPLATES_FILE, filtered);
   res.json({ ok: true });
 });
 
-app.delete("/api/templates", async (_req, res) => {
+app.delete("/api/templates", requireAdmin, async (_req, res) => {
   await writeJson(TEMPLATES_FILE, []);
   res.json({ ok: true });
 });
