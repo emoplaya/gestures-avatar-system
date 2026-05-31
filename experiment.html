@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Эксперимент — выбор ключевого кадра по 4 стратегиям</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: #0a0a0f; color: #e0e0e0; }
+  header { padding: 16px 24px; border-bottom: 1px solid #222; background: #111; }
+  header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+  header p { margin: 0; font-size: 12px; color: #888; max-width: 900px; }
+
+  .wrap { display: grid; grid-template-columns: 360px 1fr; gap: 1px; background: #222; min-height: calc(100vh - 80px); }
+  aside { background: #0f0f14; padding: 16px; overflow-y: auto; max-height: calc(100vh - 80px); }
+  main { background: #0a0a0f; padding: 16px 24px; overflow-y: auto; max-height: calc(100vh - 80px); }
+
+  label.file { display: block; padding: 12px 14px; background: #4ade80; color: #000; border-radius: 8px; cursor: pointer; font-weight: 700; text-align: center; margin-bottom: 12px; }
+  label.file input { display: none; }
+
+  .group { background: #15151c; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .group h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #aaa; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .row label { flex: 1; font-size: 12px; color: #ccc; }
+  .row input[type="number"], .row input[type="text"], .row select { width: 100px; padding: 4px 6px; background: #222; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 12px; }
+  button.action { width: 100%; padding: 8px; background: rgba(129,140,248,0.7); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px; margin-top: 4px; }
+  button.action:hover { background: rgba(129,140,248,0.9); }
+  button.action.green { background: #4ade80; color: #000; }
+  button.action.green:hover { background: #6bf09a; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+  .stat { background: #15151c; border-radius: 8px; padding: 10px 12px; }
+  .stat .label { font-size: 10px; text-transform: uppercase; color: #888; letter-spacing: 0.06em; }
+  .stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #222; color: #888; font-weight: 600; font-size: 11px; text-transform: uppercase; position: sticky; top: 0; background: #0a0a0f; }
+  table td { padding: 5px 8px; border-bottom: 1px solid #1a1a1f; }
+  table tr:hover td { background: #15151c; }
+  td.bad { color: #ef4444; }
+  td.ok { color: #4ade80; }
+
+  .empty { text-align: center; padding: 60px 20px; color: #666; }
+  .empty h2 { font-size: 18px; margin: 0 0 8px; color: #aaa; }
+  .empty p { margin: 0; font-size: 13px; line-height: 1.5; }
+
+  details { margin-top: 12px; }
+  details summary { cursor: pointer; color: #aaa; font-size: 12px; padding: 4px 0; }
+  pre { background: #0a0a0f; padding: 10px; border-radius: 6px; font-size: 11px; color: #ddd; overflow-x: auto; line-height: 1.5; }
+  code { background: #0a0a0f; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: #f59e0b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Эксперимент — пакетная обработка датасета</h1>
+  <p>Принимает множество CSV-логов траекторий, для каждого применяет 4 стратегии выбора ключевого кадра
+    (<code>last</code>, <code>middle</code>, <code>min_velocity</code>, <code>max_displacement</code>) и выгружает сводный
+    <code>extracted_frames.csv</code> для дальнейшего распознавания и подсчёта метрик.</p>
+</header>
+
+<div class="wrap">
+  <aside>
+    <label class="file">Загрузить CSV-файлы датасета
+      <input id="files" type="file" accept=".csv" multiple />
+    </label>
+
+    <div class="group">
+      <h3>Парсинг имени файла</h3>
+      <div class="row"><label>Шаблон</label>
+        <select id="pattern" style="width: 100%;">
+          <option value="trajectory_<participant>_<label>_<rep>" selected>trajectory_&lt;part&gt;_&lt;label&gt;_&lt;rep&gt;</option>
+          <option value="<participant>_<label>_<rep>"><part>_&lt;label&gt;_&lt;rep&gt;</option>
+          <option value="<label>_<rep>"><label>_&lt;rep&gt;</option>
+        </select>
+      </div>
+      <div style="font-size:10px;color:#888;line-height:1.4;margin-top:4px;">
+        Пример: <code>trajectory_p01_PRIVET_3_2026-04-26.csv</code><br/>
+        Участник = <code>p01</code>, метка = <code>PRIVET</code>, повтор = <code>3</code>.
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Параметры детекции</h3>
+      <div class="row"><label>Сглаживание</label><input id="smooth" type="number" value="5" min="1" max="21" step="2" /></div>
+      <div class="row"><label>Порог HOLD</label><input id="threshold" type="number" value="0.25" min="0.05" max="0.9" step="0.05" /></div>
+      <div class="row"><label>Мин. HOLD, мс</label><input id="minHold" type="number" value="150" min="30" max="1000" step="10" /></div>
+      <div class="row"><label>Канал velocity</label>
+        <select id="velChannel" style="width: 110px;">
+          <option value="delta_l1_wrist" selected>l1_wrist</option>
+          <option value="delta_l1">l1</option>
+          <option value="delta_angles">angles</option>
+        </select>
+      </div>
+      <div class="row"><label>Канал displacement</label>
+        <select id="dispChannel" style="width: 110px;">
+          <option value="delta_base_l1_wrist" selected>base_l1_wrist</option>
+          <option value="delta_base_l1">base_l1</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Запуск</h3>
+      <button class="action green" id="runBtn">Обработать все файлы</button>
+      <button class="action" id="exportBtn" style="margin-top:8px;">Скачать extracted_frames.csv</button>
+      <button class="action" id="exportSummaryBtn" style="margin-top:6px;">Скачать summary.csv</button>
+    </div>
+
+    <details open>
+      <summary>Что делает каждая стратегия</summary>
+<pre>
+last           — последний валидный
+                 кадр записи (= baseline,
+                 если запись «жест → возврат»).
+
+middle         — кадр на середине
+                 временного окна.
+
+min_velocity   — кадр в самом длинном
+                 HOLD-сегменте по
+                 каналу velocity (минимум
+                 скорости — рука замерла).
+
+max_displacement —
+                 кадр в самом длинном
+                 HOLD-сегменте по
+                 каналу displacement
+                 (плато на пике Δ от
+                 baseline — поза
+                 удерживается).
+</pre>
+    </details>
+
+    <details>
+      <summary>Формат extracted_frames.csv</summary>
+<pre>
+participant,label,rep,strategy,
+t_ms,frame_idx,x0,y0,z0,...,x20,y20,z20
+
+Каждая запись датасета даёт до 4
+строк (по одной на стратегию).
+
+Этот файл потом скармливается
+скрипту распознавания.
+</pre>
+    </details>
+  </aside>
+
+  <main id="main">
+    <div class="empty" id="emptyState">
+      <h2>Загрузите CSV-файлы датасета</h2>
+      <p>Файлы должны быть из логгера траекторий (та же схема, что у analyzer.html).<br/>
+      Имена файлов задают участника, метку буквы/слова и номер повтора — формат настраивается слева.</p>
+    </div>
+
+    <div id="content" style="display:none">
+      <div class="stats" id="stats"></div>
+
+      <h3 style="font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.06em;margin:20px 0 8px;">Результаты по файлам</h3>
+      <div style="max-height: 60vh; overflow-y: auto; border: 1px solid #222; border-radius: 8px;">
+        <table id="filesTable">
+          <thead>
+            <tr>
+              <th>Файл</th><th>Участник</th><th>Метка</th><th>Повтор</th>
+              <th>Кадры</th><th>last</th><th>middle</th><th>min_vel</th><th>max_disp</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+// ===== глобальное состояние =====
+let loadedFiles = [];     // [{ name, rows, parsed: {participant, label, rep} }]
+let extractedRows = [];   // [{ participant, label, rep, strategy, t, idx, lm[21] }]
+
+// ===== обработчики UI =====
+document.getElementById("files").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  loadedFiles = [];
+  for (const f of files) {
+    const text = await f.text();
+    const rows = parseCSV(text);
+    const parsed = parseName(f.name);
+    loadedFiles.push({ name: f.name, rows, parsed });
+  }
+  showEmpty(loadedFiles.length === 0);
+  renderFilesTable();
+  renderStats();
+});
+
+document.getElementById("runBtn").addEventListener("click", () => {
+  if (loadedFiles.length === 0) { alert("Сначала загрузите CSV-файлы."); return; }
+  extractedRows = [];
+  for (const file of loadedFiles) {
+    const picks = pickFrames(file.rows);
+    file.picks = picks;
+    for (const [strategy, pick] of Object.entries(picks)) {
+      if (!pick) continue;
+      extractedRows.push({
+        participant: file.parsed.participant,
+        label: file.parsed.label,
+        rep: file.parsed.rep,
+        strategy,
+        t: pick.t,
+        idx: pick.idx,
+        lm: pick.lm,
+        sourceFile: file.name,
+      });
+    }
+  }
+  renderFilesTable();
+  renderStats();
+});
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  if (extractedRows.length === 0) { alert("Сначала запустите обработку."); return; }
+  const header = ["participant", "label", "rep", "strategy", "t_ms", "frame_idx", "source_file"];
+  for (let i = 0; i < 21; i++) header.push(`x${i}`, `y${i}`, `z${i}`);
+  const lines = [header.join(",")];
+  for (const r of extractedRows) {
+    const coords = [];
+    for (let i = 0; i < 21; i++) {
+      const p = r.lm[i] || { x: "", y: "", z: "" };
+      coords.push(fmt(p.x), fmt(p.y), fmt(p.z));
+    }
+    lines.push([r.participant, r.label, r.rep, r.strategy, r.t, r.idx, r.sourceFile, ...coords].join(","));
+  }
+  download(lines.join("\n"), "extracted_frames.csv");
+});
+
+document.getElementById("exportSummaryBtn").addEventListener("click", () => {
+  if (loadedFiles.length === 0) { alert("Нет загруженных файлов."); return; }
+  const lines = ["file,participant,label,rep,n_frames,duration_ms,fps,last_t,middle_t,min_vel_t,max_disp_t"];
+  for (const f of loadedFiles) {
+    const p = f.picks || {};
+    const totalMs = f.rows.length ? f.rows[f.rows.length - 1].t - f.rows[0].t : 0;
+    const fps = totalMs > 0 ? Math.round((f.rows.length / totalMs) * 1000) : 0;
+    lines.push([
+      f.name, f.parsed.participant, f.parsed.label, f.parsed.rep,
+      f.rows.length, totalMs, fps,
+      p.last?.t ?? "", p.middle?.t ?? "", p.min_velocity?.t ?? "", p.max_displacement?.t ?? "",
+    ].join(","));
+  }
+  download(lines.join("\n"), "summary.csv");
+});
+
+for (const id of ["smooth", "threshold", "minHold", "velChannel", "dispChannel", "pattern"]) {
+  document.getElementById(id).addEventListener("change", () => {
+    if (loadedFiles.length > 0) {
+      // пере-парсим имена при смене паттерна
+      if (id === "pattern") for (const f of loadedFiles) f.parsed = parseName(f.name);
+      renderFilesTable();
+    }
+  });
+}
+
+// ===== парсинг CSV (та же схема, что в analyzer.html) =====
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((x) => x.length);
+  const header = lines[0].split(",");
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    const row = {};
+    for (let j = 0; j < header.length; j++) row[header[j]] = cols[j];
+    const r = {
+      t: +row.t,
+      missing: +row.missing === 1,
+      delta_l1: row.delta_l1 ? +row.delta_l1 : null,
+      delta_l1_wrist: row.delta_l1_wrist ? +row.delta_l1_wrist : null,
+      delta_angles: row.delta_angles ? +row.delta_angles : null,
+      delta_base_l1: row.delta_base_l1 !== undefined && row.delta_base_l1 !== "" ? +row.delta_base_l1 : null,
+      delta_base_l1_wrist: row.delta_base_l1_wrist !== undefined && row.delta_base_l1_wrist !== "" ? +row.delta_base_l1_wrist : null,
+    };
+    r.lm = [];
+    for (let k = 0; k < 21; k++) {
+      const x = row[`x${k}`], y = row[`y${k}`], z = row[`z${k}`];
+      if (x !== "" && x !== undefined) r.lm.push({ x: +x, y: +y, z: +z });
+      else { r.lm = null; break; }
+    }
+    out.push(r);
+  }
+  // Fallback для старых CSV без delta_base_*
+  const hasBase = out.some((r) => r.delta_base_l1 !== null);
+  if (!hasBase) {
+    let baseline = null;
+    for (const r of out) {
+      if (!r.lm) continue;
+      if (!baseline) { baseline = r.lm; r.delta_base_l1 = 0; r.delta_base_l1_wrist = 0; continue; }
+      r.delta_base_l1 = sumL1(r.lm, baseline);
+      r.delta_base_l1_wrist = sumL1Wrist(r.lm, baseline);
+    }
+  }
+  return out;
+}
+
+function sumL1(curr, prev) {
+  let s = 0;
+  for (let i = 0; i < 21; i++) s += Math.abs(curr[i].x - prev[i].x) + Math.abs(curr[i].y - prev[i].y) + Math.abs(curr[i].z - prev[i].z);
+  return s;
+}
+function sumL1Wrist(curr, prev) {
+  const dxW = curr[0].x - prev[0].x, dyW = curr[0].y - prev[0].y, dzW = curr[0].z - prev[0].z;
+  let s = 0;
+  for (let i = 1; i < 21; i++) s += Math.abs(curr[i].x - prev[i].x - dxW) + Math.abs(curr[i].y - prev[i].y - dyW) + Math.abs(curr[i].z - prev[i].z - dzW);
+  return s;
+}
+
+// ===== парсинг имени файла =====
+function parseName(name) {
+  // убираем расширение
+  const stem = name.replace(/\.csv$/i, "");
+  const pattern = document.getElementById("pattern").value;
+  // делим имя на токены по "_" — лишние хвостовые токены (timestamp) игнорируем
+  const tokens = stem.split("_");
+  const fields = pattern.split("_").map((f) => f.replace(/[<>]/g, ""));
+  const result = { participant: "", label: "", rep: "" };
+  let ti = 0;
+  for (const f of fields) {
+    if (f === "trajectory") { ti++; continue; }
+    if (tokens[ti] === undefined) break;
+    result[f] = tokens[ti];
+    ti++;
+  }
+  return result;
+}
+
+// ===== выбор кадров по 4 стратегиям =====
+function pickFrames(rows) {
+  const valid = rows.filter((r) => r.lm);
+  if (valid.length === 0) return {};
+  const result = {};
+
+  // last — последний валидный
+  result.last = framePick(valid[valid.length - 1], rows.indexOf(valid[valid.length - 1]));
+
+  // middle — серединный по времени
+  const tMid = (valid[0].t + valid[valid.length - 1].t) / 2;
+  let midIdx = 0, midDt = Infinity;
+  for (let i = 0; i < valid.length; i++) {
+    const dt = Math.abs(valid[i].t - tMid);
+    if (dt < midDt) { midDt = dt; midIdx = i; }
+  }
+  result.middle = framePick(valid[midIdx], rows.indexOf(valid[midIdx]));
+
+  // min_velocity — поиск низкого плато по velocity-каналу
+  const velCh = document.getElementById("velChannel").value;
+  result.min_velocity = pickByHold(rows, velCh, "low");
+
+  // max_displacement — поиск высокого плато по displacement-каналу
+  const dispCh = document.getElementById("dispChannel").value;
+  result.max_displacement = pickByHold(rows, dispCh, "high");
+
+  return result;
+}
+
+function framePick(row, idx) {
+  return { t: row.t, idx, lm: row.lm };
+}
+
+function pickByHold(rows, channel, mode) {
+  const window = +document.getElementById("smooth").value || 1;
+  const threshold = +document.getElementById("threshold").value;
+  const minHold = +document.getElementById("minHold").value;
+
+  const raw = rows.map((r) => (r.missing ? null : r[channel]));
+  const sig = movingAverage(raw, window);
+  const times = rows.map((r) => r.t);
+
+  let maxV = -Infinity;
+  for (const v of sig) if (v !== null && !isNaN(v) && v > maxV) maxV = v;
+  if (maxV <= 0) return null;
+  const cutoff = mode === "high" ? (1 - threshold) * maxV : threshold * maxV;
+  const isHold = mode === "high" ? (v) => v !== null && v >= cutoff : (v) => v !== null && v <= cutoff;
+
+  // ищем самый длинный hold-сегмент
+  let bestStart = -1, bestEnd = -1, bestLen = 0;
+  let s = -1;
+  for (let i = 0; i < sig.length; i++) {
+    if (isHold(sig[i]) && s === -1) s = i;
+    if ((!isHold(sig[i]) || i === sig.length - 1) && s !== -1) {
+      const e = isHold(sig[i]) ? i : i - 1;
+      const len = times[e] - times[s];
+      if (len >= minHold && len > bestLen) { bestStart = s; bestEnd = e; bestLen = len; }
+      s = -1;
+    }
+  }
+  if (bestStart === -1) return null;
+
+  // в этом сегменте — представительный кадр
+  let bestI = bestStart, bestV = mode === "high" ? -Infinity : Infinity;
+  for (let i = bestStart; i <= bestEnd; i++) {
+    const v = sig[i]; if (v === null) continue;
+    if (mode === "high" ? v > bestV : v < bestV) { bestV = v; bestI = i; }
+  }
+  if (!rows[bestI].lm) return null;
+  return { t: rows[bestI].t, idx: bestI, lm: rows[bestI].lm };
+}
+
+function movingAverage(arr, window) {
+  if (window <= 1) return arr.slice();
+  const half = Math.floor(window / 2);
+  const out = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    let s = 0, n = 0;
+    for (let k = -half; k <= half; k++) {
+      const j = i + k; if (j < 0 || j >= arr.length) continue;
+      const v = arr[j]; if (v === null || v === undefined || isNaN(v)) continue;
+      s += v; n++;
+    }
+    out[i] = n ? s / n : null;
+  }
+  return out;
+}
+
+// ===== рендер =====
+function showEmpty(empty) {
+  document.getElementById("emptyState").style.display = empty ? "block" : "none";
+  document.getElementById("content").style.display = empty ? "none" : "block";
+}
+
+function renderStats() {
+  const totalFiles = loadedFiles.length;
+  const participants = new Set(loadedFiles.map((f) => f.parsed.participant).filter(Boolean));
+  const labels = new Set(loadedFiles.map((f) => f.parsed.label).filter(Boolean));
+  const totalExtracted = extractedRows.length;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="label">Файлов</div><div class="value">${totalFiles}</div></div>
+    <div class="stat"><div class="label">Участников</div><div class="value">${participants.size}</div></div>
+    <div class="stat"><div class="label">Меток</div><div class="value">${labels.size}</div></div>
+    <div class="stat"><div class="label">Извлечено кадров</div><div class="value">${totalExtracted}</div></div>
+  `;
+}
+
+function renderFilesTable() {
+  const tb = document.querySelector("#filesTable tbody");
+  tb.innerHTML = loadedFiles.map((f) => {
+    const p = f.picks || {};
+    const cell = (pick) => pick ? `<td class="ok">${pick.t}</td>` : `<td class="bad">—</td>`;
+    return `
+      <tr>
+        <td style="font-size:11px;color:#888;">${f.name}</td>
+        <td>${f.parsed.participant || "<i>?</i>"}</td>
+        <td><b>${f.parsed.label || "<i>?</i>"}</b></td>
+        <td>${f.parsed.rep || ""}</td>
+        <td>${f.rows.length}</td>
+        ${cell(p.last)}${cell(p.middle)}${cell(p.min_velocity)}${cell(p.max_displacement)}
+      </tr>`;
+  }).join("");
+}
+
+// ===== утилиты =====
+function fmt(v) {
+  if (v === "" || v === null || v === undefined) return "";
+  if (typeof v !== "number" || !isFinite(v)) return "";
+  return v.toFixed(6);
+}
+
+function download(text, name) {
+  const blob = new Blob([text], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

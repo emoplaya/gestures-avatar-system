@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Распознаватель — k-NN на extracted_frames.csv</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: #0a0a0f; color: #e0e0e0; }
+  header { padding: 16px 24px; border-bottom: 1px solid #222; background: #111; }
+  header h1 { margin: 0 0 4px; font-size: 18px; font-weight: 700; }
+  header p { margin: 0; font-size: 12px; color: #888; max-width: 900px; }
+
+  .wrap { display: grid; grid-template-columns: 320px 1fr; gap: 1px; background: #222; min-height: calc(100vh - 80px); }
+  aside { background: #0f0f14; padding: 16px; overflow-y: auto; max-height: calc(100vh - 80px); }
+  main { background: #0a0a0f; padding: 16px 24px; overflow-y: auto; max-height: calc(100vh - 80px); }
+
+  label.file { display: block; padding: 12px 14px; background: #4ade80; color: #000; border-radius: 8px; cursor: pointer; font-weight: 700; text-align: center; margin-bottom: 12px; }
+  label.file input { display: none; }
+
+  .group { background: #15151c; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .group h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #aaa; font-weight: 600; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .row label { flex: 1; font-size: 12px; color: #ccc; }
+  .row input[type="number"], .row select { width: 80px; padding: 4px 6px; background: #222; border: 1px solid #333; border-radius: 4px; color: #fff; font-size: 12px; }
+  button.action { width: 100%; padding: 8px; background: rgba(129,140,248,0.7); color: #fff; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 12px; margin-top: 4px; }
+  button.action:hover { background: rgba(129,140,248,0.9); }
+  button.action.green { background: #4ade80; color: #000; }
+  button.action.green:hover { background: #6bf09a; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 16px; }
+  .stat { background: #15151c; border-radius: 8px; padding: 10px 12px; }
+  .stat .label { font-size: 10px; text-transform: uppercase; color: #888; letter-spacing: 0.06em; }
+  .stat .value { font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+  .mainTable { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .strategyCard { background: #15151c; border-radius: 8px; padding: 16px; }
+  .strategyCard h3 { margin: 0 0 8px; font-size: 14px; }
+  .strategyCard .accuracy { font-size: 36px; font-weight: 700; color: #4ade80; line-height: 1; margin-bottom: 4px; }
+  .strategyCard.bad .accuracy { color: #ef4444; }
+  .strategyCard.mid .accuracy { color: #f59e0b; }
+  .strategyCard .meta { color: #888; font-size: 11px; margin-bottom: 12px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table th { text-align: center; padding: 4px 6px; border-bottom: 1px solid #222; color: #888; font-weight: 600; font-size: 10px; text-transform: uppercase; }
+  table td { padding: 4px 6px; border-bottom: 1px solid #1a1a1f; text-align: center; }
+  table td.true { background: rgba(74,222,128,0.1); color: #4ade80; font-weight: 700; }
+  table td.label { font-weight: 700; color: #ccc; }
+  td.bad { color: #ef4444; }
+  td.ok { color: #4ade80; }
+
+  .empty { text-align: center; padding: 60px 20px; color: #666; }
+  .empty h2 { font-size: 18px; margin: 0 0 8px; color: #aaa; }
+  details { margin-top: 12px; }
+  details summary { cursor: pointer; color: #aaa; font-size: 12px; padding: 4px 0; }
+  pre { background: #0a0a0f; padding: 10px; border-radius: 6px; font-size: 11px; color: #ddd; line-height: 1.5; }
+
+  .errors { margin-top: 16px; }
+  .errors h3 { font-size: 13px; color: #aaa; text-transform: uppercase; letter-spacing: 0.06em; margin: 16px 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Распознаватель — k-NN leave-one-out по extracted_frames.csv</h1>
+  <p>Сравнивает точность распознавания для каждой из 4 стратегий выбора кадра. Использует k-ближайших соседей (k-NN) среди других кадров той же стратегии. Нормализация: запястье в начало координат, масштаб по расстоянию запястье → MCP среднего пальца.</p>
+</header>
+
+<div class="wrap">
+  <aside>
+    <label class="file">Загрузить extracted_frames.csv
+      <input id="file" type="file" accept=".csv" />
+    </label>
+
+    <div class="group">
+      <h3>Параметры k-NN</h3>
+      <div class="row">
+        <label>k (соседей)</label>
+        <input id="k" type="number" value="3" min="1" max="9" step="2" />
+      </div>
+      <div class="row">
+        <label>Метрика</label>
+        <select id="metric">
+          <option value="l2" selected>L2 (евклид)</option>
+          <option value="l1">L1 (манхэттен)</option>
+          <option value="cos">Cosine</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Нормализация</label>
+        <select id="normalize">
+          <option value="wrist_scale" selected>Запястье + масштаб</option>
+          <option value="wrist">Только запястье</option>
+          <option value="none">Сырые координаты</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Запуск</h3>
+      <button class="action green" id="runBtn">Прогнать leave-one-out</button>
+      <button class="action" id="exportBtn" style="margin-top: 8px;">Скачать results.csv</button>
+    </div>
+
+    <details open>
+      <summary>Что делает leave-one-out</summary>
+<pre>
+Для каждой записи в датасете:
+1. Берём её как тестовый пример.
+2. Среди ВСЕХ остальных записей
+   ТОЙ ЖЕ стратегии находим k
+   ближайших по форме руки.
+3. Голосуем по их меткам — это
+   предсказание.
+4. Сравниваем с истинной меткой.
+
+Accuracy на стратегии =
+   правильных / всего
+
+Это стандартный способ
+оценки на маленьких датасетах
+без отдельной обучающей и
+тестовой выборки.
+</pre>
+    </details>
+  </aside>
+
+  <main id="main">
+    <div class="empty" id="emptyState">
+      <h2>Загрузите extracted_frames.csv</h2>
+      <p>Файл выгружается из experiment.html.</p>
+    </div>
+
+    <div id="content" style="display:none">
+      <div class="stats" id="stats"></div>
+
+      <h3 style="font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.06em;margin:20px 0 8px;">Точность по стратегиям</h3>
+      <div class="mainTable" id="resultCards"></div>
+
+      <h3 style="font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.06em;margin:24px 0 8px;">Confusion matrix</h3>
+      <div id="confusions"></div>
+
+      <h3 style="font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.06em;margin:24px 0 8px;">Ошибки распознавания</h3>
+      <div id="errors"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+"use strict";
+
+let rawRows = [];
+let lastResults = null;
+
+document.getElementById("file").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  rawRows = parseCSV(await f.text());
+  document.getElementById("emptyState").style.display = "none";
+  document.getElementById("content").style.display = "block";
+  renderInitialStats();
+});
+
+document.getElementById("runBtn").addEventListener("click", () => {
+  if (rawRows.length === 0) { alert("Сначала загрузите CSV."); return; }
+  const k = +document.getElementById("k").value || 3;
+  const metric = document.getElementById("metric").value;
+  const normalize = document.getElementById("normalize").value;
+  lastResults = runExperiment(rawRows, k, metric, normalize);
+  renderResults(lastResults);
+});
+
+document.getElementById("exportBtn").addEventListener("click", () => {
+  if (!lastResults) { alert("Сначала прогоните leave-one-out."); return; }
+  const lines = ["strategy,participant,true_label,predicted_label,rep,correct"];
+  for (const [strategy, res] of Object.entries(lastResults.byStrategy)) {
+    for (const p of res.predictions) {
+      lines.push([strategy, p.participant, p.trueLabel, p.predicted, p.rep, p.correct ? 1 : 0].join(","));
+    }
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "results.csv"; a.click();
+});
+
+// ===== парсинг CSV =====
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter((x) => x.length);
+  const header = lines[0].split(",");
+  const out = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    const row = {};
+    for (let j = 0; j < header.length; j++) row[header[j]] = cols[j];
+    out.push(row);
+  }
+  return out;
+}
+
+function getLandmarks(row) {
+  const lm = [];
+  for (let i = 0; i < 21; i++) {
+    const x = +row[`x${i}`], y = +row[`y${i}`], z = +row[`z${i}`];
+    if (!isFinite(x)) return null;
+    lm.push({ x, y, z });
+  }
+  return lm;
+}
+
+function normalize(lm, mode) {
+  if (mode === "none") return lm;
+  const wrist = lm[0];
+  let scale = 1;
+  if (mode === "wrist_scale") {
+    const mcp = lm[9]; // MCP среднего пальца
+    scale = Math.hypot(mcp.x - wrist.x, mcp.y - wrist.y, mcp.z - wrist.z) || 1;
+  }
+  const out = [];
+  for (let i = 0; i < 21; i++) {
+    out.push({
+      x: (lm[i].x - wrist.x) / scale,
+      y: (lm[i].y - wrist.y) / scale,
+      z: (lm[i].z - wrist.z) / scale,
+    });
+  }
+  return out;
+}
+
+function distL2(a, b) {
+  let s = 0;
+  for (let i = 1; i < 21; i++) {
+    const dx = a[i].x - b[i].x, dy = a[i].y - b[i].y, dz = a[i].z - b[i].z;
+    s += dx*dx + dy*dy + dz*dz;
+  }
+  return Math.sqrt(s);
+}
+function distL1(a, b) {
+  let s = 0;
+  for (let i = 1; i < 21; i++) {
+    s += Math.abs(a[i].x - b[i].x) + Math.abs(a[i].y - b[i].y) + Math.abs(a[i].z - b[i].z);
+  }
+  return s;
+}
+function distCos(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 1; i < 21; i++) {
+    dot += a[i].x*b[i].x + a[i].y*b[i].y + a[i].z*b[i].z;
+    na += a[i].x*a[i].x + a[i].y*a[i].y + a[i].z*a[i].z;
+    nb += b[i].x*b[i].x + b[i].y*b[i].y + b[i].z*b[i].z;
+  }
+  const denom = Math.sqrt(na * nb) + 1e-9;
+  return 1 - dot / denom;
+}
+
+function runExperiment(rows, k, metric, normMode) {
+  const distFn = metric === "l1" ? distL1 : metric === "cos" ? distCos : distL2;
+  const samples = rows
+    .map((r) => {
+      const lmRaw = getLandmarks(r);
+      if (!lmRaw) return null;
+      return {
+        participant: r.participant,
+        trueLabel: r.label,
+        rep: r.rep,
+        strategy: r.strategy,
+        lm: normalize(lmRaw, normMode),
+      };
+    })
+    .filter((x) => x);
+
+  const byStrategy = {};
+  for (const s of samples) {
+    if (!byStrategy[s.strategy]) byStrategy[s.strategy] = [];
+    byStrategy[s.strategy].push(s);
+  }
+
+  const results = { byStrategy: {}, totalSamples: samples.length, labels: [...new Set(samples.map(s => s.trueLabel))].sort() };
+
+  for (const [strategy, samps] of Object.entries(byStrategy)) {
+    const predictions = [];
+    let correct = 0;
+    const confusion = {};
+    for (const l of results.labels) {
+      confusion[l] = {}; for (const l2 of results.labels) confusion[l][l2] = 0;
+    }
+    for (let i = 0; i < samps.length; i++) {
+      const test = samps[i];
+      const others = [];
+      for (let j = 0; j < samps.length; j++) {
+        if (j === i) continue;
+        others.push({ ...samps[j], d: distFn(test.lm, samps[j].lm) });
+      }
+      others.sort((a, b) => a.d - b.d);
+      const top = others.slice(0, k);
+      const votes = {};
+      for (const o of top) votes[o.trueLabel] = (votes[o.trueLabel] || 0) + 1;
+      let pred = "", best = 0;
+      for (const [l, v] of Object.entries(votes)) if (v > best) { best = v; pred = l; }
+      const ok = pred === test.trueLabel;
+      if (ok) correct++;
+      confusion[test.trueLabel][pred]++;
+      predictions.push({
+        participant: test.participant, trueLabel: test.trueLabel, predicted: pred,
+        rep: test.rep, correct: ok, neighbors: top.slice(0, 3).map((o) => `${o.trueLabel}(${o.d.toFixed(3)})`),
+      });
+    }
+    results.byStrategy[strategy] = {
+      accuracy: correct / samps.length, total: samps.length, correct, predictions, confusion,
+    };
+  }
+
+  return results;
+}
+
+// ===== рендер =====
+function renderInitialStats() {
+  const strategies = [...new Set(rawRows.map((r) => r.strategy))];
+  const labels = [...new Set(rawRows.map((r) => r.label))];
+  const participants = [...new Set(rawRows.map((r) => r.participant))];
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="label">Записей</div><div class="value">${rawRows.length}</div></div>
+    <div class="stat"><div class="label">Стратегий</div><div class="value">${strategies.length}</div></div>
+    <div class="stat"><div class="label">Меток</div><div class="value">${labels.length}</div></div>
+    <div class="stat"><div class="label">Участников</div><div class="value">${participants.length}</div></div>
+  `;
+}
+
+function renderResults(results) {
+  // карточки по стратегиям
+  const cards = document.getElementById("resultCards");
+  const strategies = ["last", "middle", "min_velocity", "max_displacement"];
+  cards.innerHTML = strategies.map((s) => {
+    const r = results.byStrategy[s];
+    if (!r) return `<div class="strategyCard"><h3>${s}</h3><div class="meta">нет данных</div></div>`;
+    const acc = r.accuracy * 100;
+    const cls = acc >= 80 ? "" : acc >= 60 ? "mid" : "bad";
+    return `
+      <div class="strategyCard ${cls}">
+        <h3>${s}</h3>
+        <div class="accuracy">${acc.toFixed(1)}%</div>
+        <div class="meta">${r.correct} / ${r.total} правильно</div>
+      </div>`;
+  }).join("");
+
+  // confusion matrices
+  const conf = document.getElementById("confusions");
+  conf.innerHTML = strategies.map((s) => {
+    const r = results.byStrategy[s]; if (!r) return "";
+    const labels = results.labels;
+    const rows = labels.map((trueL) => {
+      const cells = labels.map((predL) => {
+        const v = r.confusion[trueL][predL];
+        const isDiag = trueL === predL;
+        return `<td class="${isDiag && v > 0 ? "true" : v > 0 ? "bad" : ""}">${v || ""}</td>`;
+      }).join("");
+      return `<tr><td class="label">${trueL}</td>${cells}</tr>`;
+    }).join("");
+    return `
+      <div style="margin-bottom: 16px;">
+        <div style="font-weight: 600; margin-bottom: 4px; color: #ccc;">${s}</div>
+        <table style="max-width: 400px;">
+          <thead><tr><th></th>${labels.map((l) => `<th>${l}</th>`).join("")}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join("");
+
+  // ошибки
+  const err = document.getElementById("errors");
+  err.innerHTML = strategies.map((s) => {
+    const r = results.byStrategy[s]; if (!r) return "";
+    const wrong = r.predictions.filter((p) => !p.correct);
+    if (wrong.length === 0) return `<div style="margin-bottom:8px;"><b>${s}:</b> ошибок нет 🎉</div>`;
+    return `
+      <div style="margin-bottom: 12px;">
+        <div style="font-weight: 600; color: #ccc; margin-bottom: 4px;">${s} — ${wrong.length} ошибок:</div>
+        <table style="max-width: 700px;">
+          <thead><tr><th>p</th><th>истина</th><th>предсказано</th><th>повтор</th><th>топ-3 соседа</th></tr></thead>
+          <tbody>
+            ${wrong.map((p) => `<tr>
+              <td>${p.participant}</td>
+              <td class="ok">${p.trueLabel}</td>
+              <td class="bad">${p.predicted}</td>
+              <td>${p.rep}</td>
+              <td style="text-align:left;font-size:10px;color:#888;">${p.neighbors.join(", ")}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  }).join("");
+}
+</script>
+</body>
+</html>
