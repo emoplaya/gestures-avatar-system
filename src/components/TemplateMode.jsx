@@ -28,15 +28,17 @@ export const TemplateMode = ({ onRecognized }) => {
 
   const [templates, setTemplates] = useState(() => matcherRef.current.getTemplates());
 
-  // Стартовая подгрузка эталонов с сервера. load() async — обновляем
-  // локальный стейт после ответа.
+  // tick инкрементируется когда что-то на бэкенде поменялось в связке
+  // записей/эталонов (включая каскадные удаления). Перезагружаем шаблоны.
+  const tick = useGestureRecorder((s) => s.tick);
+
   useEffect(() => {
     let cancelled = false;
     matcherRef.current.load().then(() => {
       if (!cancelled) setTemplates(matcherRef.current.getTemplates());
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [tick]);
   const [recognized, setRecognized] = useState("");
   const [status, setStatus] = useState("idle"); // idle | recording | armed
   const [label, setLabel] = useState("");
@@ -73,7 +75,11 @@ export const TemplateMode = ({ onRecognized }) => {
   // от изменений каждую 30-ю секунды. Данные свежие, просто UI
   // перерисовывается реже.
   const lastDebugUpdateRef = useRef(0);
-  const DEBUG_UPDATE_MS = 200;
+  // Раньше было 200мс (5Hz), но каждый setDebug запускает ре-рендер всего
+  // компонента — на медленной машине это заметно стопорит UI пока крутится
+  // распознавание. 500мс (2Hz) достаточно, чтобы видеть что matcher жив,
+  // и в 2.5 раза меньше работы для React.
+  const DEBUG_UPDATE_MS = 500;
 
   const onFrame = useCallback((results) => {
     const lm = results.rightHandLandmarks || results.leftHandLandmarks;
@@ -489,34 +495,37 @@ export const TemplateMode = ({ onRecognized }) => {
               <div style={{ fontSize: 10, color: "#888", marginBottom: 4, textTransform: "uppercase" }}>
                 Ближайшие совпадения (меньше = лучше):
               </div>
-              {debug.lastReport.top.map((s, i) => (
-                <div key={i} style={styles.debugRow}>
-                  <span style={{ fontWeight: 700, color: i === 0 && s.distance < 0.45 ? "#4ade80" : "#ccc" }}>
-                    {s.label}
-                  </span>
-                  <span style={{
-                    color: s.distance < 0.45 ? "#4ade80" : s.distance < 0.7 ? "#f59e0b" : "#888",
-                    fontFamily: "ui-monospace, monospace",
-                    marginLeft: "auto",
-                  }}>
-                    {s.distance.toFixed(3)}
-                  </span>
-                </div>
-              ))}
+              {debug.lastReport.top.map((s, i) => {
+                // Эталоны, которые DTW оборвал как заведомо хуже порога,
+                // приходят с distance = Infinity — показываем «≥ 0.80», а не
+                // «Infinity».
+                const finite = Number.isFinite(s.distance);
+                return (
+                  <div key={i} style={styles.debugRow}>
+                    <span style={{ fontWeight: 700, color: i === 0 && finite && s.distance < 0.8 ? "#4ade80" : "#ccc" }}>
+                      {s.label}
+                    </span>
+                    <span style={{
+                      color: finite && s.distance < 0.8 ? "#4ade80" : finite && s.distance < 1.1 ? "#f59e0b" : "#888",
+                      fontFamily: "ui-monospace, monospace",
+                      marginLeft: "auto",
+                    }}>
+                      {finite ? s.distance.toFixed(3) : "≥ 0.80"}
+                    </span>
+                  </div>
+                );
+              })}
               {debug.onCooldown && (
                 <div style={{ fontSize: 10, color: "#f59e0b", marginTop: 4 }}>
                   cooldown (1.5с) — не сработает дважды
                 </div>
               )}
               <div style={{ fontSize: 10, color: "#666", marginTop: 4 }}>
-                порог матча: 0.450 · буфер: {debug.liveBufferSize} кадров
+                порог матча: 0.800 · буфер: {debug.liveBufferSize} кадров
               </div>
-              {debug.liveKeyframeCount > 0 && (
+              {debug.activeLen > 0 && (
                 <div style={{ fontSize: 10, color: "#818cf8", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
-                  ключевых кадров (экстремумы Δ): {debug.liveKeyframeCount}
-                  {debug.liveKeyframeIndices.length > 0 && (
-                    <> · индексы: [{debug.liveKeyframeIndices.join(", ")}]</>
-                  )}
+                  активная часть: {debug.activeLen} кадров · пик Δ: {debug.activePeak.toFixed(3)}
                 </div>
               )}
             </div>
@@ -562,10 +571,10 @@ export const TemplateMode = ({ onRecognized }) => {
                     <button
                       key={t.id}
                       onClick={() => deleteTemplate(t.id)}
-                      title={`${t.rawLength} исходных → ${t.keyframeCount} ключевых кадров · ${new Date(t.createdAt).toLocaleTimeString()}`}
+                      title={`${t.rawLength} исходных → ${t.trimmedLength || t.frameCount} активных → ${t.frameCount} канонических · ${new Date(t.createdAt).toLocaleTimeString()}`}
                       style={styles.templateBadge}
                     >
-                      {t.rawLength}→{t.keyframeCount}
+                      {t.rawLength}→{t.frameCount}
                     </button>
                   ))}
                 </div>
