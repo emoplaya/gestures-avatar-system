@@ -98,7 +98,40 @@ export async function processVideoFile(file, onProgress) {
     URL.revokeObjectURL(url);
   }
 
-  return frames;
+  // Постобработка: сглаживаем landmarks рук по скользящему окну.
+  // smoothLandmarks у Holistic выключен (см. setOptions выше — это сделано
+  // намеренно из-за перемоток), поэтому покадровые landmarks из видео
+  // получаются заметно шумнее, чем live-поток с вебкамеры (где Holistic
+  // сглаживает сам). А шаблон, полученный из шумных данных, потом
+  // сравнивается с гладкими live-кадрами — асимметрия портит DTW-матчинг.
+  // Внутреннее сглаживание уравнивает оба пути.
+  return smoothHandLandmarks(frames, 3);
+}
+
+function smoothHandLandmarks(frames, windowSize) {
+  if (!frames || frames.length < 2 || windowSize < 2) return frames;
+  const half = Math.floor(windowSize / 2);
+  const smooth = (arrAt, idx) => {
+    let sx = 0, sy = 0, sz = 0, n = 0;
+    for (let j = Math.max(0, idx - half); j <= Math.min(frames.length - 1, idx + half); j++) {
+      const a = arrAt(j);
+      if (!a) continue;
+      sx += a.x; sy += a.y; sz += a.z; n++;
+    }
+    if (n === 0) return null;
+    return { x: sx / n, y: sy / n, z: sz / n };
+  };
+  const smoothHand = (key, idx) => {
+    const here = frames[idx][key];
+    if (!here) return null;
+    // Сглаживаем точка-к-точке, чтобы геометрия кисти не «расползалась».
+    return here.map((_, p) => smooth((j) => frames[j][key]?.[p], idx));
+  };
+  return frames.map((f, i) => ({
+    ...f,
+    rightHandLandmarks: smoothHand("rightHandLandmarks", i),
+    leftHandLandmarks:  smoothHand("leftHandLandmarks", i),
+  }));
 }
 
 function seekVideo(video, t, duration, fps) {

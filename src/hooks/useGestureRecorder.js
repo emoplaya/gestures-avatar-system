@@ -30,6 +30,15 @@ export const useGestureRecorder = create((set, get) => ({
   recordingsLoaded: false,
   recordingsError: null,
 
+  // Счётчик «что-то поменялось в связке записей/эталонов». Серверный
+  // удалятор каскадно сносит парные сущности (удалил эталон Р → удалилась
+  // и запись Р, и наоборот), а компоненты с TemplateMatcher не узнают об
+  // этом сами. После каждой такой операции этот счётчик инкрементируется,
+  // и подписчики (TemplateMode, RecognizeGesturePanel, AnimationPlayer)
+  // перезагружают свои данные.
+  tick: 0,
+  bumpTick: () => set((s) => ({ tick: s.tick + 1 })),
+
   // ===== Воспроизведение =====
   isPlaying: false,
   playingIndex: null,
@@ -136,6 +145,8 @@ export const useGestureRecorder = create((set, get) => ({
     set({ recordings: before.filter((r) => r.id !== id) });
     try {
       await api.deleteRecording(id);
+      // Сервер каскадно мог удалить парные шаблоны — оповещаем подписчиков.
+      get().bumpTick();
     } catch (e) {
       console.warn("[recorder] Не удалось удалить запись:", e);
       set({ recordings: before });

@@ -9,20 +9,23 @@
  *   - возможность задеплоить приложение и сохранить набор жестов.
  *
  * GET — публичный. Любой пользователь может читать записи и эталоны.
- * POST/PATCH/DELETE — требует X-Admin-Auth (см. useAdmin.js).
+ * POST/PATCH/DELETE — требует X-Admin-Auth (см. useTeacher.js).
+ *   Заголовок и серверный env-пароль исторически называются «admin»;
+ *   во фронте роль теперь называется «учитель», но контракт с бэкендом
+ *   не меняем, чтобы не ломать прод.
  *
  * В dev Vite проксирует /api → http://localhost:3001 (см. vite.config.js).
  * В проде один и тот же сервер раздаёт /api и dist/, см. server/index.js.
  */
 
-import { useAdmin } from "../hooks/useAdmin";
+import { useTeacher } from "../hooks/useTeacher";
 
 const BASE = "/api";
 
 async function request(path, options = {}) {
-  // Подмешиваем заголовок админа на каждую мутацию. GET-запросы тоже могут
+  // Подмешиваем заголовок «учитель» на каждую мутацию. GET-запросы тоже могут
   // его слать — бэкенду всё равно, он его игнорирует.
-  const token = useAdmin.getState().token;
+  const token = useTeacher.getState().token;
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -34,8 +37,8 @@ async function request(path, options = {}) {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     // 401 — токен протух. Сбрасываем стор, чтобы UI знал и перерисовался.
-    if (res.status === 401 && useAdmin.getState().isAdmin) {
-      useAdmin.getState().logout();
+    if (res.status === 401 && useTeacher.getState().isTeacher) {
+      useTeacher.getState().logout();
     }
     throw new Error(`API ${res.status} ${path}: ${text}`);
   }

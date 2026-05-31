@@ -1,9 +1,10 @@
 import { create } from "zustand";
 
 /**
- * Стор админ-сессии.
+ * Стор сессии «Учитель».
  *
- * Идея простая: на бэкенде один пароль (env ADMIN_PASSWORD). Если фронт
+ * Идея простая: на бэкенде один пароль (env ADMIN_PASSWORD — имя
+ * сохранено для обратной совместимости с прод-окружением). Если фронт
  * шлёт правильный пароль в заголовке X-Admin-Auth — мутации проходят,
  * иначе — 401. Здесь мы:
  *   - храним токен (= пароль) в localStorage, чтобы он переживал перезагрузку;
@@ -11,15 +12,14 @@ import { create } from "zustand";
  *   - подписчики (api.js, ControlPanel и т.д.) читают getState().token.
  *
  * Это «мягкая» защита от случайных правок — на HTTPS этого достаточно,
- * чтобы случайный пользователь не смог редактировать записи. От серьёзного
- * атакующего она не защищает (но при self-hosted сервере и одном админе
- * этого и не нужно).
+ * чтобы случайный пользователь не смог редактировать записи.
  */
 
-const TOKEN_KEY = "vrm4.adminToken";
+const TOKEN_KEY = "vrm4.teacherToken";
+const LEGACY_TOKEN_KEY = "vrm4.adminToken";
 
-export const useAdmin = create((set, get) => ({
-  isAdmin: false,
+export const useTeacher = create((set, get) => ({
+  isTeacher: false,
   token: null,
   checked: false, // прошла ли стартовая валидация
   error: null,
@@ -30,7 +30,16 @@ export const useAdmin = create((set, get) => ({
    */
   init: async () => {
     if (get().checked) return;
-    const saved = localStorage.getItem(TOKEN_KEY);
+    let saved = localStorage.getItem(TOKEN_KEY);
+    if (!saved) {
+      // Поддерживаем старый ключ — чтобы уже залогиненные не вылетели.
+      const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+      if (legacy) {
+        saved = legacy;
+        localStorage.setItem(TOKEN_KEY, legacy);
+        localStorage.removeItem(LEGACY_TOKEN_KEY);
+      }
+    }
     if (!saved) {
       set({ checked: true });
       return;
@@ -41,16 +50,16 @@ export const useAdmin = create((set, get) => ({
       });
       const data = await res.json();
       if (data?.ok) {
-        set({ isAdmin: true, token: saved, checked: true });
+        set({ isTeacher: true, token: saved, checked: true });
       } else {
         localStorage.removeItem(TOKEN_KEY);
-        set({ isAdmin: false, token: null, checked: true });
+        set({ isTeacher: false, token: null, checked: true });
       }
     } catch (e) {
       // Сеть упала — не выбрасываем токен, просто пометим как непроверенный
       // и попробуем при следующем вызове.
-      console.warn("[admin] не удалось проверить токен:", e);
-      set({ isAdmin: false, token: saved, checked: true });
+      console.warn("[teacher] не удалось проверить токен:", e);
+      set({ isTeacher: false, token: saved, checked: true });
     }
   },
 
@@ -74,7 +83,7 @@ export const useAdmin = create((set, get) => ({
         return false;
       }
       localStorage.setItem(TOKEN_KEY, token);
-      set({ isAdmin: true, token, error: null, checked: true });
+      set({ isTeacher: true, token, error: null, checked: true });
       return true;
     } catch (e) {
       set({ error: e.message || "Ошибка сети" });
@@ -84,9 +93,9 @@ export const useAdmin = create((set, get) => ({
 
   logout: () => {
     localStorage.removeItem(TOKEN_KEY);
-    set({ isAdmin: false, token: null, error: null });
+    set({ isTeacher: false, token: null, error: null });
   },
 }));
 
 // Стартуем валидацию сразу при импорте модуля — до первого рендера App.
-useAdmin.getState().init();
+useTeacher.getState().init();
