@@ -23,3 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .claude/
+
+# Research dataset and standalone experiment/analysis prototypes — not app code
+dataset/
+analyzer.html
+experiment.html
+recognizer.html
+example_trajectory_*.csv
