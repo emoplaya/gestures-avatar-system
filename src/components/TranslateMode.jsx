@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
-import { useAdmin } from "../hooks/useAdmin";
+import { useTeacher } from "../hooks/useTeacher";
 import { TemplateMatcher } from "../utils/templateMatcher";
 import {
   IconText, IconHand, IconPlay, IconStop, IconCamera, IconCameraOff,
@@ -211,7 +211,7 @@ export const TranslateMode = ({ onRecognizeActive }) => {
 // ================= Подрежим: текст → жест =================
 
 const FromTextPanel = ({ recordings, playRecording, stopPlayback, setLastTranslated }) => {
-  const isAdmin = useAdmin((s) => s.isAdmin);
+  const isTeacher = useTeacher((s) => s.isTeacher);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("idle"); // idle | playing
   const [queue, setQueue] = useState([]);
@@ -321,9 +321,9 @@ const FromTextPanel = ({ recordings, playRecording, stopPlayback, setLastTransla
 
       {recordings.length === 0 && (
         <div style={styles.warn}>
-          {isAdmin
+          {isTeacher
             ? "Нет записанных жестов. Перейдите на вкладку «Интерактив» → «Обучение», запишите жест, и при сохранении согласитесь добавить его как анимацию."
-            : "Администратор ещё не загрузил ни одного жеста."}
+            : "Учитель ещё не загрузил ни одного жеста."}
         </div>
       )}
 
@@ -392,7 +392,7 @@ const RecognizeGesturePanel = ({
   setTranslatedState,
   avatarCbRef,
 }) => {
-  const isAdmin = useAdmin((s) => s.isAdmin);
+  const isTeacher = useTeacher((s) => s.isTeacher);
   // Статусы: idle (ждём жест) | playing (проигрываем ответ)
   const [status, setStatus] = useState("idle");
   const [cameraOn, setCameraOn] = useState(false);
@@ -411,13 +411,16 @@ const RecognizeGesturePanel = ({
   }
   const [templatesCount, setTemplatesCount] = useState(0);
 
+  // tick инкрементируется при каскадных удалениях — переподгружаем шаблоны.
+  const tick = useGestureRecorder((s) => s.tick);
+
   useEffect(() => {
     let cancelled = false;
     matcherRef.current.load().then(() => {
       if (!cancelled) setTemplatesCount(matcherRef.current.getTemplates().length);
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [tick]);
 
   const videoElement = useVideoRecognition((s) => s.videoElement);
 
@@ -435,9 +438,10 @@ const RecognizeGesturePanel = ({
     return () => onCameraActiveChange?.(false);
   }, [cameraOn, onCameraActiveChange]);
 
-  // Каждые 2 секунды переподтягиваем эталоны с сервера — на случай,
-  // если пользователь только что записал новый жест во вкладке «Обучение»
-  // и вернулся сюда (или жест был добавлен с другого устройства).
+  // Cross-device polling: каждые 5 секунд переподтягиваем эталоны на
+  // случай если жест был добавлен с другого устройства. Same-device
+  // изменения покрываются tick (см. useEffect выше), так что часто
+  // дёргать сервер не нужно — лишний JSON parsing + re-render.
   useEffect(() => {
     let cancelled = false;
     const id = setInterval(async () => {
@@ -445,7 +449,7 @@ const RecognizeGesturePanel = ({
       if (!cancelled) {
         setTemplatesCount(matcherRef.current.getTemplates().length);
       }
-    }, 2000);
+    }, 5000);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
@@ -577,9 +581,9 @@ const RecognizeGesturePanel = ({
 
       {templatesCount === 0 ? (
         <div style={styles.warn}>
-          {isAdmin
+          {isTeacher
             ? "Нет записанных эталонов. Сначала запишите жесты во вкладке «Интерактив» → «Обучение» и при сохранении согласитесь добавить их как анимации."
-            : "Администратор ещё не записал ни одного жеста для распознавания."}
+            : "Учитель ещё не записал ни одного жеста для распознавания."}
         </div>
       ) : (
         <>

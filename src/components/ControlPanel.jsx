@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { IconRotate, IconMenu, IconChevronDown } from "./icons";
-import { useAdmin } from "../hooks/useAdmin";
+import { useTeacher } from "../hooks/useTeacher";
 
 const VRM_MODELS = [
   { file: "ivan.vrm", name: "Иван" },
@@ -194,9 +194,9 @@ export const ControlPanel = ({
         </Section>
       )}
 
-      {/* ===== Админ-доступ ===== */}
-      <Section title="Админ" defaultOpen={false}>
-        <AdminBlock />
+      {/* ===== Доступ «Учитель» ===== */}
+      <Section title="Учитель" defaultOpen={false}>
+        <TeacherBlock />
       </Section>
 
       <style>{`
@@ -242,11 +242,11 @@ export const ControlPanel = ({
   );
 };
 
-function AdminBlock() {
-  const isAdmin = useAdmin((s) => s.isAdmin);
-  const error = useAdmin((s) => s.error);
-  const login = useAdmin((s) => s.login);
-  const logout = useAdmin((s) => s.logout);
+function TeacherBlock() {
+  const isTeacher = useTeacher((s) => s.isTeacher);
+  const error = useTeacher((s) => s.error);
+  const login = useTeacher((s) => s.login);
+  const logout = useTeacher((s) => s.logout);
 
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -259,11 +259,11 @@ function AdminBlock() {
     if (ok) setPassword("");
   };
 
-  if (isAdmin) {
+  if (isTeacher) {
     return (
       <div>
         <div style={{ ...styles.hint, marginTop: 0, color: "#4ade80" }}>
-          Режим администратора активен. Доступны «Обучение», «Запись»,
+          Режим учителя активен. Доступны «Обучение», «Запись»,
           удаление и переименование записей.
         </div>
         <button
@@ -277,7 +277,7 @@ function AdminBlock() {
             color: "#ef4444",
           }}
         >
-          Выйти из админа
+          Выйти из режима учителя
         </button>
       </div>
     );
@@ -286,7 +286,7 @@ function AdminBlock() {
   return (
     <div>
       <div style={{ ...styles.hint, marginTop: 0 }}>
-        Войдите как админ, чтобы записывать и редактировать жесты. Обычным
+        Войдите как учитель, чтобы записывать и редактировать жесты. Обычным
         пользователям доступны только «Анимации» и «Перевод».
       </div>
       <input
@@ -294,7 +294,7 @@ function AdminBlock() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-        placeholder="Пароль администратора"
+        placeholder="Пароль учителя"
         disabled={busy}
         style={{
           ...styles.select,

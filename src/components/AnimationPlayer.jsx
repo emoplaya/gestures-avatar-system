@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useGestureRecorder } from "../hooks/useGestureRecorder";
 import { useVideoRecognition } from "../hooks/useVideoRecognition";
-import { useAdmin } from "../hooks/useAdmin";
+import { useTeacher } from "../hooks/useTeacher";
 import { IconFilm, IconPlay, IconStop, IconTrash } from "./icons";
 
 /**
@@ -24,7 +24,7 @@ export const AnimationPlayer = () => {
   const getPlaybackDelay = useGestureRecorder((s) => s.getPlaybackDelay);
   const deleteRecording = useGestureRecorder((s) => s.deleteRecording);
   const renameRecording = useGestureRecorder((s) => s.renameRecording);
-  const isAdmin = useAdmin((s) => s.isAdmin);
+  const isTeacher = useTeacher((s) => s.isTeacher);
 
   const [selectedId, setSelectedId] = useState(null);
   const [renamingId, setRenamingId] = useState(null);
@@ -137,9 +137,9 @@ export const AnimationPlayer = () => {
             Нет сохранённых анимаций.
             <br />
             <span style={{ color: "#aaa", fontSize: "11px" }}>
-              {isAdmin
+              {isTeacher
                 ? "Перейдите в раздел «Интерактив», включите камеру и запишите жест."
-                : "Администратор ещё не загрузил жесты."}
+                : "Учитель ещё не загрузил жесты."}
             </span>
           </div>
         ) : (
@@ -183,9 +183,9 @@ export const AnimationPlayer = () => {
                       ) : (
                         <div
                           style={styles.itemName}
-                          title={isAdmin ? "Дважды кликните для переименования" : rec.name}
+                          title={isTeacher ? "Дважды кликните для переименования" : rec.name}
                           onDoubleClick={(e) => {
-                            if (!isAdmin) return;
+                            if (!isTeacher) return;
                             e.stopPropagation();
                             startRename(rec);
                           }}
@@ -200,7 +200,7 @@ export const AnimationPlayer = () => {
                     {isThisPlaying && (
                       <span style={styles.playingDot}><IconPlay size={10} color="#4ade80" /></span>
                     )}
-                    {isAdmin && (
+                    {isTeacher && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

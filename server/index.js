@@ -150,10 +150,40 @@ app.patch("/api/recordings/:id", requireAdmin, async (req, res) => {
 
 app.delete("/api/recordings/:id", requireAdmin, async (req, res) => {
   const recordings = await readJson(RECORDINGS_FILE, []);
+  const target = recordings.find((r) => r.id === req.params.id);
   const filtered = recordings.filter((r) => r.id !== req.params.id);
   await writeJson(RECORDINGS_FILE, filtered);
-  res.json({ ok: true, removed: recordings.length - filtered.length });
+
+  // Каскад: если у удалённой записи была метка (имя), удаляем все шаблоны
+  // распознавания с такой же меткой. Это поддерживает инвариант «запись и
+  // эталон жеста живут вместе» — пользователь видит один и тот же набор
+  // жестов в Анимациях и в Распознавании.
+  let cascadedTemplates = 0;
+  if (target) {
+    const label = norm(target.name);
+    // Не каскадим если остаются другие записи с тем же именем (бывают
+    // несколько вариантов одного жеста).
+    const stillHasRecording = filtered.some((r) => norm(r.name) === label);
+    if (label && !stillHasRecording) {
+      const templates = await readJson(TEMPLATES_FILE, []);
+      const remaining = templates.filter((t) => norm(t.label) !== label);
+      cascadedTemplates = templates.length - remaining.length;
+      if (cascadedTemplates > 0) {
+        await writeJson(TEMPLATES_FILE, remaining);
+      }
+    }
+  }
+
+  res.json({
+    ok: true,
+    removed: recordings.length - filtered.length,
+    cascadedTemplates,
+  });
 });
+
+function norm(s) {
+  return (s || "").trim().toUpperCase();
+}
 
 // ===== Templates (DTW для распознавания) =====
 app.get("/api/templates", async (_req, res) => {
@@ -178,9 +208,28 @@ app.post("/api/templates", requireAdmin, async (req, res) => {
 
 app.delete("/api/templates/:id", requireAdmin, async (req, res) => {
   const templates = await readJson(TEMPLATES_FILE, []);
+  const target = templates.find((t) => t.id === req.params.id);
   const filtered = templates.filter((t) => t.id !== req.params.id);
   await writeJson(TEMPLATES_FILE, filtered);
-  res.json({ ok: true });
+
+  // Каскад: если после удаления у метки не осталось эталонов — удаляем
+  // соответствующие записи (анимации) с этим именем. См. парный обработчик
+  // в DELETE /api/recordings/:id.
+  let cascadedRecordings = 0;
+  if (target) {
+    const label = norm(target.label);
+    const stillHasTemplate = filtered.some((t) => norm(t.label) === label);
+    if (label && !stillHasTemplate) {
+      const recordings = await readJson(RECORDINGS_FILE, []);
+      const remaining = recordings.filter((r) => norm(r.name) !== label);
+      cascadedRecordings = recordings.length - remaining.length;
+      if (cascadedRecordings > 0) {
+        await writeJson(RECORDINGS_FILE, remaining);
+      }
+    }
+  }
+
+  res.json({ ok: true, cascadedRecordings });
 });
 
 app.delete("/api/templates", requireAdmin, async (_req, res) => {
